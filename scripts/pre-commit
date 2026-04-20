@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# reagent pre-commit hook.
+#   - Runs `ruff format` and `ruff check --fix` on staged .py files via uvx.
+#   - Re-stages anything the tools modified so the formatted version lands
+#     in the commit.
+#   - Fails the commit if `ruff check` still finds unfixable errors.
+#
+# Install by running `scripts/setup.sh` from the repo root.
+set -euo pipefail
+
+# Staged .py files (added / modified / renamed; skip deletions).
+mapfile -t files < <(git diff --cached --name-only --diff-filter=ACMR -- '*.py')
+if [ ${#files[@]} -eq 0 ]; then
+    exit 0
+fi
+
+# Known limitation: if any file has both staged and unstaged changes, the
+# formatting runs on the working tree (staged + unstaged combined) and the
+# re-stage below will pull all of it into the commit. Commit on a clean
+# working tree if you want fine-grained control over partial staging.
+
+uvx ruff format -- "${files[@]}"
+uvx ruff check --fix -- "${files[@]}"
+git add -u -- "${files[@]}"

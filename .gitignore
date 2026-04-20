@@ -1,0 +1,9 @@
+# Host-local scratch: one-off probes, dataset caches, result JSONs,
+# anything that shouldn't leave this machine. Drop any new local file
+# into sandbox/ rather than adding another entry here.
+sandbox/
+
+# Directory-level ignores only — no individual files below.
+results/
+__pycache__/
+*.pyc
