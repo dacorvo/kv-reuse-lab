@@ -97,6 +97,65 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
+def _rotate_half(x: torch.Tensor) -> torch.Tensor:
+    """HF-convention RoPE half-rotation: [a | b] -> [-b | a]."""
+    d = x.shape[-1] // 2
+    return torch.cat((-x[..., d:], x[..., :d]), dim=-1)
+
+
+def _find_text_backbone(model):
+    """Return (text_model, rotary_emb) for Llama-style text-only models
+    and for multimodal Gemma 4 checkpoints where the text backbone is
+    nested one deeper under `model.model.language_model`.
+    """
+    inner = getattr(model, "model", model)
+    if hasattr(inner, "rotary_emb"):
+        return inner, inner.rotary_emb
+    lm = getattr(inner, "language_model", None)
+    if lm is not None and hasattr(lm, "rotary_emb"):
+        return lm, lm.rotary_emb
+    raise AttributeError("could not locate rotary_emb in model")
+
+
+def shift_k_rope(k: torch.Tensor, model, layer_idx: int, shift: int) -> torch.Tensor:
+    """Apply a uniform RoPE delta of `shift` positions to a cached K tensor.
+
+    The cached K was rotated at original positions [p_base..p_base+L).
+    Composing an additional rotation by `shift` produces K as if it had
+    been rotated at [p_base+shift..p_base+shift+L), which is what we
+    need to splice it at drifted positions without phase mismatch. This
+    is the same correction that `llama_memory_seq_add` applies in
+    llama.cpp.
+
+    k: [batch, num_kv_heads, seq_len, head_dim] (standard HF cache layout).
+
+    We compute cos/sin directly from `inv_freq` rather than routing
+    through `rotary.forward`, because HF's rotary modules have device
+    bookkeeping (`dynamic_rope_update`, per-layer-type buffers) that
+    breaks under `device_map="balanced"` when `inv_freq` and `k` live
+    on different GPUs.
+    """
+    if shift == 0:
+        return k
+    text_model, rotary = _find_text_backbone(model)
+    # Gemma-4 registers `{layer_type}_inv_freq` per hybrid layer type;
+    # Llama registers a single `inv_freq`.
+    if hasattr(rotary, "inv_freq"):
+        inv_freq = rotary.inv_freq
+        attn_scaling = float(getattr(rotary, "attention_scaling", 1.0))
+    else:
+        layer_type = text_model.config.layer_types[layer_idx]
+        inv_freq = getattr(rotary, f"{layer_type}_inv_freq")
+        attn_scaling = float(getattr(rotary, f"{layer_type}_attention_scaling", 1.0))
+    inv_freq = inv_freq.to(device=k.device, dtype=torch.float32)
+    freq = inv_freq * float(shift)
+    emb = torch.cat([freq, freq], dim=-1)
+    cos = (emb.cos() * attn_scaling).to(dtype=k.dtype)
+    sin = (emb.sin() * attn_scaling).to(dtype=k.dtype)
+    # cos/sin: [head_dim] → broadcasts over [batch, heads, seq, head_dim].
+    return k * cos + _rotate_half(k) * sin
+
+
 ROLE_MAP = {
     "system": "system",
     "human": "user",
@@ -419,6 +478,16 @@ def main():
         "visible GPUs; use 'cuda:0' to pin a small model.",
     )
     p.add_argument("--trust-remote-code", action="store_true")
+    p.add_argument(
+        "--reuse-mode",
+        choices=("naive", "shifted"),
+        default="naive",
+        help="KV reuse strategy. 'naive' splices cached K/V at the "
+        "drifted position without correction (the baseline experiment). "
+        "'shifted' applies a RoPE delta rotation to the cached K so "
+        "its phases match the new positions — the same correction that "
+        "llama.cpp's --cache-reuse performs via llama_memory_seq_add.",
+    )
     p.add_argument("--output", required=True)
     args = p.parse_args()
 
@@ -590,6 +659,7 @@ def main():
             past_reused = out.past_key_values
             del out  # free the prefill logits
             torch.cuda.empty_cache()
+            kv_shift = tool_end_drift - tool_end_base
             for li, (kb, vb) in enumerate(baseline_chunk_kv):
                 if hasattr(past_reused, "layers"):
                     lyr = past_reused.layers[li]
@@ -599,7 +669,10 @@ def main():
                     v_tensor = past_reused.value_cache[li]
                 if k_tensor.shape[-2] < L:
                     continue
-                k_tensor[..., -L:, :].copy_(kb.to(k_tensor.device, k_tensor.dtype))
+                kb_dev = kb.to(k_tensor.device, k_tensor.dtype)
+                if args.reuse_mode == "shifted" and kv_shift != 0:
+                    kb_dev = shift_k_rope(kb_dev, model, li, kv_shift)
+                k_tensor[..., -L:, :].copy_(kb_dev)
                 v_tensor[..., -L:, :].copy_(vb.to(v_tensor.device, v_tensor.dtype))
 
             remaining = drifted_stream[tool_end_drift:T_d]
@@ -726,6 +799,7 @@ def main():
         "chunk_tokens": L,
         "dtype": args.dtype,
         "attn_impl": args.attn_impl,
+        "reuse_mode": args.reuse_mode,
         "prompt_source": "hermes_chat_template_in_context",
         "n_examples": len(base_examples),
         "per_drift": agg,
