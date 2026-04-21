@@ -96,6 +96,14 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from drift_modes import (
+    DRIFT_MODES,
+    inflate,
+    load_hermes_examples,
+    prompt_msgs_through_tool,
+    reference_assistant_response,
+)
+
 
 def _rotate_half(x: torch.Tensor) -> torch.Tensor:
     """HF-convention RoPE half-rotation: [a | b] -> [-b | a]."""
@@ -156,32 +164,6 @@ def shift_k_rope(k: torch.Tensor, model, layer_idx: int, shift: int) -> torch.Te
     return k * cos + _rotate_half(k) * sin
 
 
-ROLE_MAP = {
-    "system": "system",
-    "human": "user",
-    "user": "user",
-    "gpt": "assistant",
-    "assistant": "assistant",
-    # Tool responses are carried as user-role turns with
-    # <tool_response>…</tool_response> markers in the content.
-    # Gemma/Llama chat templates reject a distinct `tool` role.
-    "tool": "user",
-    "function": "user",
-}
-
-
-def hermes_to_messages(ex) -> List[Dict[str, str]]:
-    out = []
-    for t in ex.get("conversations") or ex.get("messages") or []:
-        role = t.get("from") or t.get("role") or ""
-        content = t.get("value") or t.get("content") or ""
-        r = ROLE_MAP.get(role, role)
-        if not r:
-            continue
-        out.append({"role": r, "content": content})
-    return out
-
-
 def render_messages(
     tokenizer, msgs, add_generation_prompt: bool = False
 ) -> torch.Tensor:
@@ -196,132 +178,6 @@ def render_messages(
     if ids.ndim == 2:
         ids = ids[0]
     return ids
-
-
-def reference_assistant_response(ex) -> str:
-    """Return the text of the assistant turn that follows the tool turn
-    in a Hermes example — the "gold" response we'd compare against.
-    Returns an empty string if the example has no such turn.
-    """
-    convs = ex.get("conversations") or []
-    saw_tool = False
-    for t in convs:
-        role = t.get("from") or t.get("role") or ""
-        if saw_tool and role in ("gpt", "assistant"):
-            return t.get("value") or t.get("content") or ""
-        if role == "tool":
-            saw_tool = True
-    return ""
-
-
-def prompt_msgs_through_tool(ex) -> List[Dict[str, str]]:
-    """Return the Hermes conversation truncated up to and including the
-    first tool-result turn. Drops the trailing assistant summary so the
-    prompt ends where a real agent would — before decoding the next
-    assistant turn.
-
-    Works on the raw `conversations` field so we can see `from=tool`
-    before role mapping folds it into `user`.
-    """
-    convs = ex.get("conversations") or []
-    truncated = []
-    saw_tool = False
-    for t in convs:
-        truncated.append(t)
-        if (t.get("from") or t.get("role")) == "tool":
-            saw_tool = True
-            break
-    if not saw_tool:
-        return []
-    return hermes_to_messages({"conversations": truncated})
-
-
-def load_hermes_examples(
-    n_base: int, min_tokens_fn, config: str = "func_calling"
-) -> List[dict]:
-    """Stream Hermes `config` subset, keep examples with a tool turn
-    that pass the per-tokenizer length check."""
-    from datasets import load_dataset
-
-    ds = load_dataset(
-        "NousResearch/hermes-function-calling-v1", config, split="train", streaming=True
-    )
-    base: List[dict] = []
-    for ex in ds:
-        if len(base) >= n_base:
-            break
-        convs = ex.get("conversations") or []
-        if not any((t.get("from") or t.get("role")) == "tool" for t in convs):
-            continue
-        try:
-            if min_tokens_fn(ex):
-                base.append(ex)
-        except Exception:
-            continue
-    if len(base) < n_base:
-        raise RuntimeError(f"only {len(base)}/{n_base} base examples found")
-    return base
-
-
-def inflate_system_turn(
-    tokenizer, base_msgs, target_delta: int
-) -> Tuple[List[Dict[str, str]], int]:
-    """Append a tokenized prefix of the system content back onto itself
-    until the rendered stream has grown by ≥ target_delta tokens.
-
-    Token-level granularity: we tokenize the original system content
-    once, pick K tokens from it via binary search, decode back to text,
-    and append. Re-rendering the full message list gives the true drift.
-
-    Returns (drifted_msgs, actual_delta_tokens).
-    """
-    T0 = render_messages(tokenizer, base_msgs).shape[0]
-    if target_delta <= 0:
-        return base_msgs, 0
-
-    system_idx = next(
-        (i for i, m in enumerate(base_msgs) if m["role"] == "system"), None
-    )
-    if system_idx is None:
-        return base_msgs, 0
-
-    original = base_msgs[system_idx]["content"]
-    sys_tokens = tokenizer(original, add_special_tokens=False)["input_ids"]
-    if not sys_tokens:
-        return base_msgs, 0
-
-    def build(k: int) -> Tuple[List[Dict[str, str]], int]:
-        """Append k tokens' worth of redundant system content."""
-        # Wrap around if k exceeds the original length.
-        repeats = (k + len(sys_tokens) - 1) // len(sys_tokens)
-        repeated = sys_tokens * max(1, repeats)
-        append_ids = repeated[:k]
-        append_text = tokenizer.decode(append_ids)
-        trial_msgs = list(base_msgs)
-        trial_msgs[system_idx] = {
-            "role": "system",
-            "content": original + "\n" + append_text,
-        }
-        trial_ids = render_messages(tokenizer, trial_msgs)
-        return trial_msgs, trial_ids.shape[0] - T0
-
-    # Binary search for the smallest k such that achieved delta >= target.
-    lo, hi = 1, max(target_delta * 4, 4 * len(sys_tokens))
-    # Grow hi until achievable delta exceeds target (handles BOS/template overhead).
-    msgs_hi, d_hi = build(hi)
-    while d_hi < target_delta:
-        hi *= 2
-        if hi > 1_000_000:
-            return msgs_hi, d_hi
-        msgs_hi, d_hi = build(hi)
-    while lo < hi:
-        mid = (lo + hi) // 2
-        _, d_mid = build(mid)
-        if d_mid < target_delta:
-            lo = mid + 1
-        else:
-            hi = mid
-    return build(lo)
 
 
 def _stack_kv(pkv, li):
@@ -488,6 +344,25 @@ def main():
         "its phases match the new positions — the same correction that "
         "llama.cpp's --cache-reuse performs via llama_memory_seq_add.",
     )
+    p.add_argument(
+        "--drift-mode",
+        choices=DRIFT_MODES,
+        default="system-duplicate",
+        help="How to construct the drifted prompt. 'system-duplicate' "
+        "appends duplicates of the base's own system content. "
+        "'system-instructions' appends real instruction content from "
+        "other Hermes examples. 'turn-insert' splices donor "
+        "[user, asst, tool] triples between the original user and the "
+        "assistant tool call. 'prior-tool-exchange' splices donor "
+        "triples between the system and the original user.",
+    )
+    p.add_argument(
+        "--n-donors",
+        type=int,
+        default=20,
+        help="How many donor examples to harvest past the base set "
+        "for non-trivial drift modes.",
+    )
     p.add_argument("--output", required=True)
     args = p.parse_args()
 
@@ -524,9 +399,14 @@ def main():
         flush=True,
     )
     t0 = time.time()
-    base_examples = load_hermes_examples(args.n_examples, base_long_enough)
+    need_donors = args.drift_mode != "system-duplicate"
+    n_donors = args.n_donors if need_donors else 0
+    base_examples, donor_examples = load_hermes_examples(
+        args.n_examples, base_long_enough, n_donors=n_donors
+    )
     print(
-        f"[info] loaded {len(base_examples)} base examples in {time.time() - t0:.1f}s",
+        f"[info] loaded {len(base_examples)} base + {len(donor_examples)} donor "
+        f"examples in {time.time() - t0:.1f}s",
         flush=True,
     )
 
@@ -598,8 +478,12 @@ def main():
                 drifted_msgs = base_msgs
                 actual_delta = 0
             else:
-                drifted_msgs, actual_delta = inflate_system_turn(
-                    tok, base_msgs, target_delta
+                drifted_msgs, actual_delta = inflate(
+                    args.drift_mode,
+                    tok,
+                    base_msgs,
+                    target_delta,
+                    donor_examples=donor_examples,
                 )
             # Render drifted with add_generation_prompt=True → model's
             # next decode position is the final token.
@@ -800,6 +684,7 @@ def main():
         "dtype": args.dtype,
         "attn_impl": args.attn_impl,
         "reuse_mode": args.reuse_mode,
+        "drift_mode": args.drift_mode,
         "prompt_source": "hermes_chat_template_in_context",
         "n_examples": len(base_examples),
         "per_drift": agg,
