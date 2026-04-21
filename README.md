@@ -1,10 +1,32 @@
 # reagent — tool-result KV cache reuse sensitivity
 
-**reagent** measures whether a language model's next-token
-distribution changes when a serving stack reuses a previously computed
-KV tensor for a tool result — the text the agent pastes in after a
-tool call — at a position that has drifted because the surrounding
-system prompt or earlier turns grew between the two requests.
+**reagent** measures whether server-side KV cache reuse preserves
+task behaviour when the cached block appears at a drifted absolute
+position in a new request. It targets the *read/consumption* step of
+cross-request cache reuse — the splice-the-cached-K-into-the-new-prefix
+path — and compares two strategies at that step: *naive* (splice with
+original RoPE phases) and *shifted* (re-rotate K to the new positions,
+matching llama.cpp's `llama_memory_seq_add`).
+
+## Scope
+
+- **Cached blocks are semantically aligned.** We cache the last
+  `L=128` tokens of a Hermes tool-result turn — a long, self-contained,
+  deterministic block at a clean structural edge. This is the best-case
+  input to the splice path.
+- **The read path is the same across cache policies.** Whether a server
+  caches only whole semantic units (hypothetical "semantic caching") or
+  any contiguous N+ token span (llama.cpp's `--cache-reuse`), the
+  consumption step is identical: greedy byte-exact match → overwrite
+  K/V slots → continue decoding. The two policies differ only in what
+  enters the cache; once a match is found, the splice mechanism we
+  measure is shared.
+- **Cache policy is server-side.** The client sends the prompt; what
+  recurs and what matches is decided by the server. Reagent measures a
+  serving-stack property, not an agent-framework property.
+- What we **do not** test yet: length-based caching that can match
+  arbitrary interior spans (fragments that cross turn boundaries,
+  non-structural subsequences). See "Future directions".
 
 ## What we are testing
 
@@ -267,3 +289,31 @@ question, an assistant tool call, and a tool-result turn (mean ≈ 400
 tokens — comfortably larger than our 128-token cache chunk). We take
 the first 20 examples that pass a minimum-length filter; each is
 measured independently and the aggregate is reported.
+
+## Future directions
+
+- **Length-based cache reuse.** llama.cpp's `--cache-reuse N` greedily
+  finds any N+ token byte-exact match regardless of structural
+  alignment. At low N this splices fragments that cross turn
+  boundaries or sit mid-paragraph — K vectors whose attention was
+  conditioned on context that is *not* present in the new request.
+  Our harness always caches a semantically-aligned slice, so this
+  failure mode is out of scope. Testing it would mean adding a
+  harness setting that picks arbitrary interior cache boundaries
+  (e.g. spans that cross the `assistant(tool_call) → tool(result)`
+  boundary) and rerunning the naive/shifted comparison.
+- **Small cache chunks.** As `L` shrinks, a larger fraction of the
+  cached K vectors attend to pre-block tokens rather than to other
+  block-internal tokens. Shift correction handles positions but
+  cannot repair attention to a different external neighbourhood, so
+  the shifted-reuse ceiling is expected to drop below the near-1.00
+  level we see at `L=128`.
+- **Non-agentic cached content.** Retrieved documents in RAG, source
+  code chunks, long user-pasted files. Same splice mechanism but
+  different attention-conditioning profiles; worth replicating on a
+  non-Hermes dataset.
+- **Accumulated reuse across many turns.** Our measurement is single
+  hop: one request writes the cache, the next reads it. A realistic
+  agent session reuses the same cached chunk across many turns; if
+  errors compound, a setup that is lossless at N=1 may not be at
+  N=10.
