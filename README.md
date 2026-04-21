@@ -79,35 +79,94 @@ whether doing so silently degrades the response.
 sampling would frequently diverge; ≥ 5 = the distributions disagree
 on almost everything.
 
-**Cosine-similarity scale** (under `bge-small-en-v1.5`):
-≥ 0.95 = same answer; 0.80–0.95 = same topic, rewording; 0.50–0.80 =
-different content (possibly different action); < 0.50 = different
-meaning.
+**Cosine-similarity scale** (under `bge-small-en-v1.5`, matching the
+green / yellow / red bands in the figure): ≥ 0.95 = same answer
+(green); 0.80–0.95 = same topic, rewording (yellow); < 0.80 =
+different content or meaning (red).
 
-## Reading a row
+## Results
 
-```
-                          Δ=0         Δ=100       Δ=500       Δ=1000
-llama-3.2-1b-instruct
-  mean_kl ± stdev         0.00±0.01   0.12±0.05   0.31±0.12   0.48±0.18
-  top-1 agree             1.00        0.95        0.85        0.75
-  sim(fresh, reused)      1.00        0.98        0.92        0.88
-  sim(reused, reference)  0.74        0.73        0.70        0.68
-```
+N = 20 Hermes examples, L = 128, `bge-small-en-v1.5` embedder.
+
+![reagent panel](reagent_panel.png)
+
+### sim(fresh, reused) — headline
+
+Semantic similarity between the greedy continuation produced without
+reuse and with reuse. Green band (≥ 0.95) means naive reuse produces
+a semantically-equivalent response; yellow (0.80–0.95) means same
+topic but rewording; red (< 0.80) means reuse rewrites the answer.
+
+| model | Δ=0 | Δ=50 | Δ=100 | Δ=200 | Δ=500 | Δ=1000 |
+|---|---|---|---|---|---|---|
+| `gemma-4-E4B` | 1.00 | 0.99 | 0.96 | 0.96 | 0.93 | 0.92 |
+| `gemma-4-31B` | 1.00 | 0.99 | 0.99 | 0.97 | 0.95 | 0.91 |
+| `gemma-4-26B-A4B` | 0.99 | 0.97 | 0.98 | 0.96 | 0.86 | 0.85 |
+| `Llama-3.1-8B` | 0.98 | 0.92 | 0.86 | 0.82 | 0.79 | 0.81 |
+| `Llama-3.2-1B` | 0.96 | 0.84 | 0.79 | 0.74 | 0.73 | 0.68 |
+| `gemma-4-E2B` | 0.99 | 0.97 | 0.96 | 0.91 | 0.78 | 0.60 |
+
+### top-1 agreement
+
+Fraction of examples where fresh and reused produce the same argmax
+token at the trigger position. Green (≥ 0.90), yellow (0.70–0.90),
+red (< 0.70) in the figure.
+
+| model | Δ=0 | Δ=50 | Δ=100 | Δ=200 | Δ=500 | Δ=1000 |
+|---|---|---|---|---|---|---|
+| `gemma-4-E4B` | 1.00 | 1.00 | 0.90 | 0.90 | 0.75 | 0.80 |
+| `gemma-4-31B` | 1.00 | 1.00 | 0.95 | 0.85 | 0.75 | 0.55 |
+| `Llama-3.1-8B` | 0.95 | 0.80 | 0.65 | 0.50 | 0.50 | 0.45 |
+| `gemma-4-26B-A4B` | 1.00 | 0.95 | 0.80 | 0.80 | 0.45 | 0.40 |
+| `gemma-4-E2B` | 1.00 | 0.85 | 0.90 | 0.70 | 0.35 | 0.15 |
+| `Llama-3.2-1B` | 0.95 | 0.40 | 0.20 | 0.10 | 0.20 | 0.10 |
+
+### mean KL(fresh ∥ reused) (nats)
+
+| model | Δ=0 | Δ=50 | Δ=100 | Δ=200 | Δ=500 | Δ=1000 |
+|---|---|---|---|---|---|---|
+| `gemma-4-E4B` | 0.00±0.00 | 0.01±0.02 | 0.03±0.04 | 0.09±0.09 | 0.62±1.29 | 0.69±1.41 |
+| `Llama-3.1-8B` | 0.00±0.00 | 0.08±0.04 | 0.21±0.20 | 1.02±1.45 | 1.94±2.46 | 2.09±2.39 |
+| `gemma-4-31B` | 0.00±0.00 | 0.03±0.06 | 0.15±0.58 | 0.40±1.41 | 1.98±4.61 | 2.65±5.41 |
+| `gemma-4-26B-A4B` | 0.01±0.01 | 0.06±0.14 | 0.09±0.14 | 0.36±1.07 | 2.91±3.36 | 2.74±3.14 |
+| `Llama-3.2-1B` | 0.00±0.00 | 2.25±1.67 | 3.47±2.32 | 5.50±3.03 | 5.44±3.02 | 5.93±3.26 |
+| `gemma-4-E2B` | 0.01±0.05 | 1.91±5.72 | 0.14±0.40 | 2.49±4.59 | 3.99±4.74 | 7.01±5.56 |
+
+### sim(reused, reference)
+
+Cosine similarity of the reused continuation against the dataset's
+gold assistant reply — a task-quality floor independent of fresh.
+
+| model | Δ=0 | Δ=50 | Δ=100 | Δ=200 | Δ=500 | Δ=1000 |
+|---|---|---|---|---|---|---|
+| `gemma-4-E4B` | 0.91 | 0.90 | 0.89 | 0.89 | 0.88 | 0.88 |
+| `gemma-4-31B` | 0.91 | 0.91 | 0.90 | 0.91 | 0.89 | 0.87 |
+| `gemma-4-26B-A4B` | 0.90 | 0.89 | 0.90 | 0.89 | 0.84 | 0.83 |
+| `Llama-3.1-8B` | 0.87 | 0.83 | 0.82 | 0.79 | 0.74 | 0.74 |
+| `gemma-4-E2B` | 0.88 | 0.88 | 0.88 | 0.83 | 0.77 | 0.58 |
+| `Llama-3.2-1B` | 0.76 | 0.76 | 0.73 | 0.67 | 0.67 | 0.65 |
+
+### How to read the tables
 
 - **Δ=0** is the sanity floor. Non-zero KL here means a harness bug,
   not a model insight.
-- **`sim(fresh, reused)`** is the headline. Above 0.9, naive reuse
-  produces a semantically-equivalent response. Below 0.8, reuse
-  rewrites the answer.
+- **`sim(fresh, reused)`** is the headline. ≥ 0.95 (green) means
+  naive reuse is indistinguishable; 0.80–0.95 (yellow) means same
+  topic but rewording; < 0.80 (red) means reuse rewrites the answer.
 - **KL** flags first-token disagreement; **sim** tells you whether
   the disagreement persists or the two sides converge on similar
   content after a few tokens. Use both.
 - **`sim(reused, reference)`** gives a quality floor: if it drops
   faster than `sim(fresh, reused)` as Δ grows, reuse is degrading
   task quality.
-- **Large stdev matters.** `±6` on an `8` KL mean means the outcome
-  is prompt-dependent and production quality would be unpredictable.
+- **Large stdev matters.** Gemma-4-E2B at Δ=1000 shows `7.01±5.56`:
+  the outcome is prompt-dependent and production quality would be
+  unpredictable.
+- **Agreement vs similarity diverge.** Top-1 agreement drops fast
+  (even the best models are at 0.55–0.80 by Δ=1000), while
+  `sim(fresh, reused)` holds ≥ 0.90 for the Gemma-4 ≥ 4B panel —
+  greedy decoding recovers to semantically-equivalent output
+  despite first-token disagreement.
 
 ### Drift magnitudes
 
@@ -159,9 +218,9 @@ models that already have a non-empty `results/<model>.json`
 model writes a JSON with both aggregated statistics and per-example
 rows.
 
-`visualize.py` renders a 4-panel figure
-(`sim(fresh, reused)`, top-1 agreement, KL ± stdev, and
-`sim(reused, reference)`) from whatever JSONs are present.
+`visualize.py` renders a 2-panel figure (`sim(fresh, reused)` and
+top-1 agreement) from whatever JSONs are present, with green /
+yellow / red safety bands drawn from the Passing Bar thresholds.
 
 ## Contributing
 
