@@ -200,6 +200,65 @@ magnitude is small on this dataset because a tool-result's K is
 mostly internally self-referential, but it is present and
 non-zero.
 
+### Multi-segment shifted reuse on real same-codebase agent traces
+
+The canonical harness splices ONE cached chunk into a drifted prompt.
+A gap-stitching serving engine would face something harder: multiple
+byte-exact matches scattered through the new prompt, each with its
+own position delta, with native-prefilled gap tokens in between (see
+`trace_analysis/`). `measure_multi_splice.py` implements the
+post-prefill-overwrite scheme (Scheme A): prefill the new request up
+to the last match end; overwrite each matched span's K (RoPE-shifted
+by that span's delta) and V with the cached copy; forward the tail
+and compare to a fully-fresh forward.
+
+Llama-3.2-1B-Instruct, django SWE-smith trajectories, N=10 sessions,
+min-match 128, 45 ordered (A, B) pairs:
+
+| metric | value |
+|---|---|
+| matches/pair | mean 1.8, max 7 |
+| coverage | mean 4%, p90 6%, max 22% |
+| longest match | max 1136 tok |
+| KL(fresh ‖ reused) | mean 0.02, median 0.00, p90 0.02 |
+| sim(fresh, reused) | mean **0.97**, median **1.00**, p10 0.91 |
+| top-1 agree | 44/45 |
+
+Per-pair quality distribution:
+
+| bucket | pairs | share |
+|---|---|---|
+| sim = 1.00 (bit-exact generation) | 30 | 67% |
+| 0.95 ≤ sim < 1.00 | 6 | 13% |
+| 0.80 ≤ sim < 0.95 | 7 | 16% |
+| sim < 0.80 | 2 | 4% |
+
+Multi-segment shifted splice is approximately lossless on two thirds
+of pairs and acceptable (sim ≥ 0.95) on ~80%. The ~20% degradation
+tail is the same context-conditioning failure mode the single-chunk
+`prior-tool-exchange` stress test exposes (shift corrects RoPE phase
+but cannot reconstruct the neighbouring-token referents that the
+cached K vectors point into). Two observations worth noting:
+
+1. **Volume is not the dominant risk.** The best pair in the run
+   (7 matches, 22% coverage, longest 1136 tok) produced sim = 1.00.
+   The worst pairs (sim 0.71, 0.80) had only 1–2 short matches at
+   low coverage. The number of splices is not what breaks
+   generation; *where* they sit relative to the generation prompt is.
+2. **Failures cluster at short splices near the tail.** When the
+   only match is a short chunk just before the generation prompt and
+   the surrounding context differs across sessions, the shifted
+   chunk drags the continuation off track. The main-panel
+   single-chunk curves predict the same shape.
+
+The upshot: on same-codebase agent workloads a gap-stitching engine
+that commits shifted multi-splice blindly would get bit-identical
+generations ~67% of the time, acceptable ones ~80%, and noticeably
+degrade ~5%. With a gate that rejects splices where the surrounding
+context diverges most (heuristic: short match + short tail + low
+longest-match fraction), most of the trace-analysis-reported ~29%
+per-turn coverage is safely reachable.
+
 ### Drift magnitudes
 
 | Δ | Realistic analogue |
@@ -275,10 +334,29 @@ lines and shifted as solid lines, in matching colours per model, on
 the green / yellow / red safety bands from the Passing Bar
 thresholds.
 
-The `drift_modes` module is unit-tested with pytest:
+Multi-segment shifted reuse (the gap-stitching experiment from
+the Results section) is run separately:
+
+```bash
+uv run --script measure_multi_splice.py \
+    --model meta-llama/Llama-3.2-1B-Instruct \
+    --repo django --n-sessions 10 --min-match 128 \
+    --output results/multi_splice_django_llama1b.json
+```
+
+`measure_multi_splice.py` loads SWE-smith trajectories filtered by
+repo prefix, finds every byte-exact ≥ `--min-match`-token span
+between each ordered pair of sessions (A, B), and per pair overwrites
+B's prefill cache with A's shifted K/V at each match, then compares
+the tail generation against a fully-fresh B forward. Results append
+to a `.jsonl` sidecar so a crashed run can resume from where it
+stopped.
+
+The `drift_modes` and `kv_cache` modules are unit-tested with pytest:
 
 ```bash
 ./test_drift_modes.py    # 59 parametrized tests, ~0.1 s
+./test_kv_cache.py       # 5 tests covering write_kv_span routing
 ```
 
 ## Contributing
