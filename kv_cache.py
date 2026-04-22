@@ -64,7 +64,7 @@ def _text_layers(model):
         if root is None:
             continue
         for attr in ("language_model", ""):
-            inner = getattr(root, attr) if attr else root
+            inner = getattr(root, attr, None) if attr else root
             if inner is None:
                 continue
             layers = getattr(inner, "layers", None)
