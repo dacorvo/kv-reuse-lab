@@ -349,8 +349,28 @@ measured independently and the aggregate is reported.
   code chunks, long user-pasted files. Same splice mechanism but
   different attention-conditioning profiles; worth replicating on a
   non-Hermes dataset.
-- **Accumulated reuse across many turns.** Our measurement is single
-  hop: one request writes the cache, the next reads it. A realistic
-  agent session reuses the same cached chunk across many turns; if
-  errors compound, a setup that is lossless at N=1 may not be at
-  N=10.
+- **Cache-hit frequency in real agent traces.** Our harness
+  constructs a drift scenario and measures its correctness impact,
+  but does not measure how often such scenarios *actually occur* in
+  production agent workloads. Pure data analysis on existing traces
+  (SWE-Bench, BFCL, τ-bench, real Claude Code / Cursor session logs):
+  for each session, tokenize every request, then measure per-request
+  what fraction of tokens have a byte-exact ≥ N-token match against
+  any earlier request, and how contiguous those matches are. The gap
+  between "total matchable tokens" and "longest single contiguous
+  match" bounds the upside a gap-stitching reuse scheme could
+  capture over llama.cpp's current prefix-plus-one-slide algorithm.
+  Without this, it's hard to tell whether the multi-segment case is
+  a hot scenario or a curiosity.
+- **Multi-segment and accumulated reuse.** Our measurement is
+  single-shot: one request's splice in isolation. Two extensions,
+  both requiring the harness to move closer to a real serving loop:
+  *(a) multi-segment in one request* — splice multiple disjoint
+  cached chunks into a single prompt with re-prefilled gaps between
+  them, each chunk shifted to its new position. Chunk B's K vectors
+  now sit in a context where both their original neighbours *and*
+  chunk A's attention-state are wrong. Does per-chunk error add,
+  multiply, or saturate? *(b) accumulated reuse across many turns*
+  — the same cached chunk read and re-transplanted across N
+  sequential turns. If errors compound, a setup that is lossless at
+  N=1 may not be at N=10.
