@@ -94,8 +94,6 @@ from typing import Dict, List, Tuple
 
 import torch
 import torch.nn.functional as F
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
 from drift_modes import (
     DRIFT_MODES,
     inflate,
@@ -103,97 +101,13 @@ from drift_modes import (
     prompt_msgs_through_tool,
     reference_assistant_response,
 )
-
-
-def _rotate_half(x: torch.Tensor) -> torch.Tensor:
-    """HF-convention RoPE half-rotation: [a | b] -> [-b | a]."""
-    d = x.shape[-1] // 2
-    return torch.cat((-x[..., d:], x[..., :d]), dim=-1)
-
-
-def _find_text_backbone(model):
-    """Return (text_model, rotary_emb) for Llama-style text-only models
-    and for multimodal Gemma 4 checkpoints where the text backbone is
-    nested one deeper under `model.model.language_model`.
-    """
-    inner = getattr(model, "model", model)
-    if hasattr(inner, "rotary_emb"):
-        return inner, inner.rotary_emb
-    lm = getattr(inner, "language_model", None)
-    if lm is not None and hasattr(lm, "rotary_emb"):
-        return lm, lm.rotary_emb
-    raise AttributeError("could not locate rotary_emb in model")
-
-
-def shift_k_rope(k: torch.Tensor, model, layer_idx: int, shift: int) -> torch.Tensor:
-    """Apply a uniform RoPE delta of `shift` positions to a cached K tensor.
-
-    The cached K was rotated at original positions [p_base..p_base+L).
-    Composing an additional rotation by `shift` produces K as if it had
-    been rotated at [p_base+shift..p_base+shift+L), which is what we
-    need to splice it at drifted positions without phase mismatch. This
-    is the same correction that `llama_memory_seq_add` applies in
-    llama.cpp.
-
-    k: [batch, num_kv_heads, seq_len, head_dim] (standard HF cache layout).
-
-    We compute cos/sin directly from `inv_freq` rather than routing
-    through `rotary.forward`, because HF's rotary modules have device
-    bookkeeping (`dynamic_rope_update`, per-layer-type buffers) that
-    breaks under `device_map="balanced"` when `inv_freq` and `k` live
-    on different GPUs.
-    """
-    if shift == 0:
-        return k
-    text_model, rotary = _find_text_backbone(model)
-    # Gemma-4 registers `{layer_type}_inv_freq` per hybrid layer type;
-    # Llama registers a single `inv_freq`.
-    if hasattr(rotary, "inv_freq"):
-        inv_freq = rotary.inv_freq
-        attn_scaling = float(getattr(rotary, "attention_scaling", 1.0))
-    else:
-        layer_type = text_model.config.layer_types[layer_idx]
-        inv_freq = getattr(rotary, f"{layer_type}_inv_freq")
-        attn_scaling = float(getattr(rotary, f"{layer_type}_attention_scaling", 1.0))
-    inv_freq = inv_freq.to(device=k.device, dtype=torch.float32)
-    freq = inv_freq * float(shift)
-    emb = torch.cat([freq, freq], dim=-1)
-    cos = (emb.cos() * attn_scaling).to(dtype=k.dtype)
-    sin = (emb.sin() * attn_scaling).to(dtype=k.dtype)
-    # cos/sin: [head_dim] → broadcasts over [batch, heads, seq, head_dim].
-    return k * cos + _rotate_half(k) * sin
-
-
-def render_messages(
-    tokenizer, msgs, add_generation_prompt: bool = False
-) -> torch.Tensor:
-    enc = tokenizer.apply_chat_template(
-        msgs,
-        tokenize=True,
-        add_generation_prompt=add_generation_prompt,
-        return_tensors="pt",
-        return_dict=True,
-    )
-    ids = enc["input_ids"] if hasattr(enc, "__getitem__") else enc
-    if ids.ndim == 2:
-        ids = ids[0]
-    return ids
-
-
-def _stack_kv(pkv, li):
-    if hasattr(pkv, "layers"):
-        return pkv.layers[li].keys, pkv.layers[li].values
-    if hasattr(pkv, "key_cache"):
-        return pkv.key_cache[li], pkv.value_cache[li]
-    return pkv[li][0], pkv[li][1]
-
-
-def _num_layers(pkv):
-    if hasattr(pkv, "layers"):
-        return len(pkv.layers)
-    if hasattr(pkv, "key_cache"):
-        return len(pkv.key_cache)
-    return len(pkv)
+from generation import forward_with_cache, greedy_continue, render_messages
+from kv_cache import layer_kv as _stack_kv
+from kv_cache import num_layers as _num_layers
+from kv_cache import slice_tail  # noqa: F401
+from model_loading import add_model_args, load_model, load_tokenizer
+from rope_shift import shift_k_rope
+from similarity import load_embedder_and_cos_sim
 
 
 @torch.no_grad()
@@ -216,87 +130,11 @@ def prefill_full(
     return kvs, logits
 
 
-def slice_tail(kvs, n: int):
-    """Take the last `n` entries along the sequence dim.
-
-    Works with sliding-window caches (HybridCache) where per-layer
-    cache length can be smaller than the raw sequence length.
-    """
-    out = []
-    for k, v in kvs:
-        take = min(n, k.shape[-2])
-        out.append((k[..., -take:, :].contiguous(), v[..., -take:, :].contiguous()))
-    return out
-
-
-@torch.no_grad()
-def greedy_continue(
-    model, past_kv, first_token: int, start_pos: int, max_new: int, stop_token_ids: set
-) -> List[int]:
-    """Greedy-decode starting from `first_token` at position `start_pos`,
-    one token at a time, using and advancing `past_kv`. Stops when a
-    stop token is produced or after `max_new` tokens. Returns the
-    generated token ids INCLUDING `first_token` as the first element.
-    """
-    device = next(model.parameters()).device
-    generated = [first_token]
-    cur_tok = first_token
-    cur_pos = start_pos
-    for _ in range(max_new - 1):
-        pos = torch.tensor([cur_pos], device=device)
-        out = model(
-            input_ids=torch.tensor([[cur_tok]], device=device),
-            past_key_values=past_kv,
-            position_ids=pos.unsqueeze(0),
-            cache_position=pos,
-            use_cache=True,
-        )
-        nxt = int(out.logits[0, -1].argmax().item())
-        if nxt in stop_token_ids:
-            break
-        generated.append(nxt)
-        cur_tok = nxt
-        cur_pos += 1
-    return generated
-
-
-@torch.no_grad()
-def forward_with_cache(
-    model, input_ids: torch.Tensor, past_kv, trigger_position: int
-) -> torch.Tensor:
-    """Forward tokens one at a time using an injected cache.
-
-    Gemma-family (hybrid sliding-window) attention rejects multi-token
-    forwards when past_kv has heterogeneous per-layer lengths, so we
-    loop single-token-at-a-time. Returns the logits for all new tokens
-    stacked (shape [n, vocab]).
-
-    `trigger_position` is the absolute position of the FIRST new token;
-    subsequent tokens get `trigger_position + i` so RoPE phases match
-    the drifted stream's absolute positions.
-    """
-    device = next(model.parameters()).device
-    input_ids = input_ids.to(device)
-    n = input_ids.shape[0]
-    all_logits: List[torch.Tensor] = []
-    for i in range(n):
-        pos = torch.tensor([trigger_position + i], device=device)
-        out = model(
-            input_ids=input_ids[i : i + 1].unsqueeze(0),
-            past_key_values=past_kv,
-            position_ids=pos.unsqueeze(0),
-            cache_position=pos,
-            use_cache=True,
-        )
-        all_logits.append(out.logits[0, -1].detach())
-    return torch.stack(all_logits)
-
-
 def main():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("--model", required=True)
+    add_model_args(p)
     p.add_argument(
         "--drifts", type=int, nargs="+", default=[0, 50, 100, 200, 500, 1000]
     )
@@ -315,25 +153,6 @@ def main():
         help="Sentence-transformers model for embedding "
         "similarity between fresh and reused generations.",
     )
-    p.add_argument(
-        "--dtype", choices=["bfloat16", "float16", "float32"], default="bfloat16"
-    )
-    p.add_argument(
-        "--attn-impl",
-        default="sdpa",
-        help="Use 'sdpa' for Llama / Gemma 4. Gemma 3 requires "
-        "'eager' (its SDPA implementation in transformers "
-        "5.5 produces wrong logits when a forward is split "
-        "into prefill + per-token decode).",
-    )
-    p.add_argument(
-        "--device-map",
-        default="balanced",
-        help="Weight placement strategy passed to "
-        "from_pretrained. 'balanced' spreads across all "
-        "visible GPUs; use 'cuda:0' to pin a small model.",
-    )
-    p.add_argument("--trust-remote-code", action="store_true")
     p.add_argument(
         "--reuse-mode",
         choices=("naive", "shifted"),
@@ -366,19 +185,11 @@ def main():
     p.add_argument("--output", required=True)
     args = p.parse_args()
 
-    dtype = {
-        "bfloat16": torch.bfloat16,
-        "float16": torch.float16,
-        "float32": torch.float32,
-    }[args.dtype]
     L = args.chunk_tokens
     # Base examples only need enough room for the chunk + a real prior.
     min_base = L + 128
 
-    print(f"[info] loading tokenizer {args.model}", flush=True)
-    tok = AutoTokenizer.from_pretrained(
-        args.model, trust_remote_code=args.trust_remote_code
-    )
+    tok = load_tokenizer(args)
 
     def base_long_enough(ex) -> bool:
         msgs = prompt_msgs_through_tool(ex)
@@ -410,35 +221,10 @@ def main():
         flush=True,
     )
 
-    print(
-        f"[info] loading model {args.model}  device_map={args.device_map}",
-        flush=True,
-    )
-    t0 = time.time()
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model,
-        dtype=dtype,
-        device_map=args.device_map,
-        attn_implementation=args.attn_impl,
-        trust_remote_code=args.trust_remote_code,
-    )
-    model.eval()
-    print(f"[info] model loaded in {time.time() - t0:.1f}s", flush=True)
+    model = load_model(args)
 
     # Embedder runs on CPU; keep off the GPU the model is using.
-    print(f"[info] loading embedder {args.embedder}", flush=True)
-    from sentence_transformers import SentenceTransformer
-
-    embedder = SentenceTransformer(args.embedder, device="cpu")
-    import numpy as np
-
-    def cos_sim(a: str, b: str) -> float:
-        if not a.strip() or not b.strip():
-            return float("nan")
-        ea, eb = embedder.encode(
-            [a, b], convert_to_numpy=True, normalize_embeddings=True
-        )
-        return float(np.dot(ea, eb))
+    cos_sim = load_embedder_and_cos_sim(args.embedder)
 
     # Stop-token set for greedy decoding: any EOS-like token.
     stop_ids = set()
@@ -545,12 +331,7 @@ def main():
             torch.cuda.empty_cache()
             kv_shift = tool_end_drift - tool_end_base
             for li, (kb, vb) in enumerate(baseline_chunk_kv):
-                if hasattr(past_reused, "layers"):
-                    lyr = past_reused.layers[li]
-                    k_tensor, v_tensor = lyr.keys, lyr.values
-                else:
-                    k_tensor = past_reused.key_cache[li]
-                    v_tensor = past_reused.value_cache[li]
+                k_tensor, v_tensor = _stack_kv(past_reused, li)
                 if k_tensor.shape[-2] < L:
                     continue
                 kb_dev = kb.to(k_tensor.device, k_tensor.dtype)
