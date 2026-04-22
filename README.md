@@ -349,19 +349,17 @@ measured independently and the aggregate is reported.
   code chunks, long user-pasted files. Same splice mechanism but
   different attention-conditioning profiles; worth replicating on a
   non-Hermes dataset.
-- **Cache-hit frequency in real agent traces.** Our harness
-  constructs a drift scenario and measures its correctness impact,
-  but does not measure how often such scenarios *actually occur* in
-  production agent workloads. Pure data analysis on existing traces
-  (SWE-Bench, BFCL, τ-bench, real Claude Code / Cursor session logs):
-  for each session, tokenize every request, then measure per-request
-  what fraction of tokens have a byte-exact ≥ N-token match against
-  any earlier request, and how contiguous those matches are. The gap
-  between "total matchable tokens" and "longest single contiguous
-  match" bounds the upside a gap-stitching reuse scheme could
-  capture over llama.cpp's current prefix-plus-one-slide algorithm.
-  Without this, it's hard to tell whether the multi-segment case is
-  a hot scenario or a curiosity.
+- **Cache-hit frequency in real agent traces** (addressed by
+  [`trace_analysis/`](trace_analysis/)). A pure data-analytical
+  companion to the correctness measurement: how much of a real
+  request can be byte-matched against earlier requests, and is the
+  match contiguous (llama.cpp's prefix-plus-slide can exploit it) or
+  fragmented (only gap-stitching could)? Initial findings: on
+  repo-grouped workloads (SWE-smith django, Claude Code on
+  hyperswitch) coverage averages ~29% with ~4 distinct match
+  fragments per request, and the "gap" (coverage minus longest
+  contiguous match) is ~13–14% — real upside that current engines
+  leave on the table.
 - **Multi-segment and accumulated reuse.** Our measurement is
   single-shot: one request's splice in isolation. Two extensions,
   both requiring the harness to move closer to a real serving loop:
