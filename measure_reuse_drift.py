@@ -104,7 +104,7 @@ from drift_modes import (
 from generation import forward_with_cache, greedy_continue, render_messages
 from kv_cache import layer_kv as _stack_kv
 from kv_cache import num_layers as _num_layers
-from kv_cache import slice_tail  # noqa: F401
+from kv_cache import slice_tail, write_kv_span  # noqa: F401
 from model_loading import add_model_args, load_model, load_tokenizer
 from rope_shift import shift_k_rope
 from similarity import load_embedder_and_cos_sim
@@ -331,14 +331,17 @@ def main():
             torch.cuda.empty_cache()
             kv_shift = tool_end_drift - tool_end_base
             for li, (kb, vb) in enumerate(baseline_chunk_kv):
-                k_tensor, v_tensor = _stack_kv(past_reused, li)
+                k_tensor, _ = _stack_kv(past_reused, li)
                 if k_tensor.shape[-2] < L:
                     continue
-                kb_dev = kb.to(k_tensor.device, k_tensor.dtype)
+                cache_len = k_tensor.shape[-2]
+                dst = slice(cache_len - L, cache_len)
+                kb_shifted = kb
                 if args.reuse_mode == "shifted" and kv_shift != 0:
-                    kb_dev = shift_k_rope(kb_dev, model, li, kv_shift)
-                k_tensor[..., -L:, :].copy_(kb_dev)
-                v_tensor[..., -L:, :].copy_(vb.to(v_tensor.device, v_tensor.dtype))
+                    kb_shifted = shift_k_rope(
+                        kb.to(k_tensor.device, k_tensor.dtype), model, li, kv_shift
+                    )
+                write_kv_span(past_reused, model, li, dst, kb_shifted, vb)
 
             remaining = drifted_stream[tool_end_drift:T_d]
             if remaining.shape[0] > 0:

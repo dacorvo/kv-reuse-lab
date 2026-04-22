@@ -42,6 +42,12 @@ def shift_k_rope(k: torch.Tensor, model, layer_idx: int, shift: int) -> torch.Te
 
     k: [batch, num_kv_heads, seq_len, head_dim] (standard HF cache layout).
 
+    Partial-rotary / proportional RoPE (e.g. Gemma-4 full_attention
+    with ``partial_rotary_factor=0.25``) is handled implicitly: the
+    registered ``{layer_type}_inv_freq`` buffer already has zeros in
+    the NoPE positions, so ``cos=1, sin=0`` there and those dims pass
+    through untouched.
+
     We compute cos/sin directly from `inv_freq` rather than routing
     through `rotary.forward`, because HF's rotary modules have device
     bookkeeping (`dynamic_rope_update`, per-layer-type buffers) that

@@ -62,6 +62,7 @@ import torch.nn.functional as F
 from generation import forward_with_cache, greedy_continue
 from kv_cache import layer_kv as _layer_kv_tensors
 from kv_cache import num_layers as _num_layers
+from kv_cache import write_kv_span
 from aggregation import percentile as _percentile
 from model_loading import add_model_args, load_model, load_tokenizer
 from rope_shift import shift_k_rope
@@ -267,7 +268,7 @@ def multi_splice_forward(
         shift = b_start - a_start
         span_len = b_end - b_start
         for li in range(_num_layers(past)):
-            k_tensor, v_tensor = _layer_kv_tensors(past, li)
+            k_tensor, _ = _layer_kv_tensors(past, li)
             if k_tensor.shape[-2] < b_end:
                 # Sliding-window cache: the target span might not exist at
                 # this layer. Skip silently.
@@ -277,13 +278,11 @@ def multi_splice_forward(
             kA_dev = kA.to(k_tensor.device, k_tensor.dtype)
             if shift != 0:
                 kA_dev = shift_k_rope(kA_dev, model, li, shift)
-            vA_dev = vA.to(v_tensor.device, v_tensor.dtype)
             # Guard on span length for sliding-window where a_end - a_start
             # might have been clipped in cached_a_kvs.
             if kA_dev.shape[-2] != span_len:
                 continue
-            k_tensor[..., b_start:b_end, :].copy_(kA_dev)
-            v_tensor[..., b_start:b_end, :].copy_(vA_dev)
+            write_kv_span(past, model, li, slice(b_start, b_end), kA_dev, vA)
     # Forward the remaining tokens of B one at a time so they attend
     # to the (partially overwritten) cache.
     remaining = session_b_ids[last_b_end:T]
