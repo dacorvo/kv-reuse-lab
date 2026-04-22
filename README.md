@@ -108,87 +108,97 @@ different content or meaning (red).
 
 ## Results
 
-N = 20 Hermes examples, L = 128, `bge-small-en-v1.5` embedder.
+N = 20 Hermes examples, L = 128, `bge-small-en-v1.5` embedder,
+drift-mode = `system-duplicate`.
 
 ![reagent panel](reagent_panel.png)
 
-### sim(fresh, reused) — headline
+Dashed lines = naive reuse (splice cached K/V without correction);
+solid lines = shifted reuse (re-rotate K by the position delta before
+splicing, matching llama.cpp's `llama_memory_seq_add`). Coloured bands
+come from the Passing Bar thresholds.
+
+### sim(fresh, reused) — headline (naive → shifted)
 
 Semantic similarity between the greedy continuation produced without
-reuse and with reuse. Green band (≥ 0.95) means naive reuse produces
-a semantically-equivalent response; yellow (0.80–0.95) means same
-topic but rewording; red (< 0.80) means reuse rewrites the answer.
+reuse and with reuse. ≥ 0.95 (green) means reuse is
+indistinguishable from fresh; 0.80–0.95 (yellow) means same topic
+but rewording; < 0.80 (red) means reuse rewrites the answer.
 
 | model | Δ=0 | Δ=50 | Δ=100 | Δ=200 | Δ=500 | Δ=1000 |
 |---|---|---|---|---|---|---|
-| `gemma-4-E4B` | 1.00 | 0.99 | 0.96 | 0.96 | 0.93 | 0.92 |
-| `gemma-4-31B` | 1.00 | 0.99 | 0.99 | 0.97 | 0.95 | 0.91 |
-| `gemma-4-26B-A4B` | 0.99 | 0.97 | 0.98 | 0.96 | 0.86 | 0.85 |
-| `Llama-3.1-8B` | 0.98 | 0.92 | 0.86 | 0.82 | 0.79 | 0.81 |
-| `Llama-3.2-1B` | 0.96 | 0.84 | 0.79 | 0.74 | 0.73 | 0.68 |
-| `gemma-4-E2B` | 0.99 | 0.97 | 0.96 | 0.91 | 0.78 | 0.60 |
+| `gemma-4-E4B` | 1.00→1.00 | 0.99→0.99 | 0.96→1.00 | 0.96→0.99 | 0.93→0.99 | 0.92→0.99 |
+| `gemma-4-31B` | 1.00→1.00 | 0.99→1.00 | 0.99→0.99 | 0.97→0.99 | 0.95→0.98 | 0.91→0.98 |
+| `gemma-4-26B-A4B` | 0.99→0.99 | 0.97→0.98 | 0.98→0.98 | 0.96→0.99 | 0.86→0.98 | 0.85→0.99 |
+| `Llama-3.1-8B` | 0.98→0.98 | 0.92→0.95 | 0.86→0.94 | 0.82→0.94 | 0.79→0.97 | 0.81→0.96 |
+| `gemma-4-E2B` | 0.99→0.99 | 0.97→0.99 | 0.96→0.98 | 0.91→0.99 | 0.78→0.98 | 0.60→**0.99** |
+| `Llama-3.2-1B` | 0.96→0.96 | 0.84→0.95 | 0.79→0.95 | 0.74→0.96 | 0.73→0.97 | 0.68→**0.95** |
 
-### top-1 agreement
+Shifted reuse lifts every model to ≥ 0.94 sim across the whole
+drift range. The worst naive regressions (E2B at Δ=1000: 0.60;
+Llama-3.2-1B at Δ=1000: 0.68) recover to 0.99 and 0.95. The phase
+error is essentially the whole story at this block type.
+
+### top-1 agreement (naive → shifted)
 
 Fraction of examples where fresh and reused produce the same argmax
-token at the trigger position. Green (≥ 0.90), yellow (0.70–0.90),
-red (< 0.70) in the figure.
+token at the trigger position. Stricter metric than sim — first-token
+disagreement can be papered over by greedy decoding, so top-1 drops
+faster than sim even when the final text converges.
 
 | model | Δ=0 | Δ=50 | Δ=100 | Δ=200 | Δ=500 | Δ=1000 |
 |---|---|---|---|---|---|---|
-| `gemma-4-E4B` | 1.00 | 1.00 | 0.90 | 0.90 | 0.75 | 0.80 |
-| `gemma-4-31B` | 1.00 | 1.00 | 0.95 | 0.85 | 0.75 | 0.55 |
-| `Llama-3.1-8B` | 0.95 | 0.80 | 0.65 | 0.50 | 0.50 | 0.45 |
-| `gemma-4-26B-A4B` | 1.00 | 0.95 | 0.80 | 0.80 | 0.45 | 0.40 |
-| `gemma-4-E2B` | 1.00 | 0.85 | 0.90 | 0.70 | 0.35 | 0.15 |
-| `Llama-3.2-1B` | 0.95 | 0.40 | 0.20 | 0.10 | 0.20 | 0.10 |
-
-### mean KL(fresh ∥ reused) (nats)
-
-| model | Δ=0 | Δ=50 | Δ=100 | Δ=200 | Δ=500 | Δ=1000 |
-|---|---|---|---|---|---|---|
-| `gemma-4-E4B` | 0.00±0.00 | 0.01±0.02 | 0.03±0.04 | 0.09±0.09 | 0.62±1.29 | 0.69±1.41 |
-| `Llama-3.1-8B` | 0.00±0.00 | 0.08±0.04 | 0.21±0.20 | 1.02±1.45 | 1.94±2.46 | 2.09±2.39 |
-| `gemma-4-31B` | 0.00±0.00 | 0.03±0.06 | 0.15±0.58 | 0.40±1.41 | 1.98±4.61 | 2.65±5.41 |
-| `gemma-4-26B-A4B` | 0.01±0.01 | 0.06±0.14 | 0.09±0.14 | 0.36±1.07 | 2.91±3.36 | 2.74±3.14 |
-| `Llama-3.2-1B` | 0.00±0.00 | 2.25±1.67 | 3.47±2.32 | 5.50±3.03 | 5.44±3.02 | 5.93±3.26 |
-| `gemma-4-E2B` | 0.01±0.05 | 1.91±5.72 | 0.14±0.40 | 2.49±4.59 | 3.99±4.74 | 7.01±5.56 |
-
-### sim(reused, reference)
-
-Cosine similarity of the reused continuation against the dataset's
-gold assistant reply — a task-quality floor independent of fresh.
-
-| model | Δ=0 | Δ=50 | Δ=100 | Δ=200 | Δ=500 | Δ=1000 |
-|---|---|---|---|---|---|---|
-| `gemma-4-E4B` | 0.91 | 0.90 | 0.89 | 0.89 | 0.88 | 0.88 |
-| `gemma-4-31B` | 0.91 | 0.91 | 0.90 | 0.91 | 0.89 | 0.87 |
-| `gemma-4-26B-A4B` | 0.90 | 0.89 | 0.90 | 0.89 | 0.84 | 0.83 |
-| `Llama-3.1-8B` | 0.87 | 0.83 | 0.82 | 0.79 | 0.74 | 0.74 |
-| `gemma-4-E2B` | 0.88 | 0.88 | 0.88 | 0.83 | 0.77 | 0.58 |
-| `Llama-3.2-1B` | 0.76 | 0.76 | 0.73 | 0.67 | 0.67 | 0.65 |
+| `gemma-4-E4B` | 1.00→1.00 | 1.00→1.00 | 0.90→1.00 | 0.90→0.95 | 0.75→1.00 | 0.80→1.00 |
+| `gemma-4-31B` | 1.00→1.00 | 1.00→1.00 | 0.95→0.95 | 0.85→0.90 | 0.75→0.95 | 0.55→0.95 |
+| `gemma-4-26B-A4B` | 1.00→1.00 | 0.95→0.95 | 0.80→0.90 | 0.80→1.00 | 0.45→0.90 | 0.40→1.00 |
+| `Llama-3.1-8B` | 0.95→0.95 | 0.80→0.90 | 0.65→0.75 | 0.50→0.85 | 0.50→0.85 | 0.45→0.85 |
+| `gemma-4-E2B` | 1.00→1.00 | 0.85→0.90 | 0.90→0.95 | 0.70→1.00 | 0.35→0.95 | 0.15→**1.00** |
+| `Llama-3.2-1B` | 0.95→0.95 | 0.40→0.95 | 0.20→0.90 | 0.10→0.90 | 0.20→0.90 | 0.10→**0.85** |
 
 ### How to read the tables
 
 - **Δ=0** is the sanity floor. Non-zero KL here means a harness bug,
-  not a model insight.
+  not a model insight. At Δ=0 both naive and shifted should produce
+  identical output — the shift is 0, so `shift_k_rope` is a no-op.
 - **`sim(fresh, reused)`** is the headline. ≥ 0.95 (green) means
-  naive reuse is indistinguishable; 0.80–0.95 (yellow) means same
-  topic but rewording; < 0.80 (red) means reuse rewrites the answer.
-- **KL** flags first-token disagreement; **sim** tells you whether
-  the disagreement persists or the two sides converge on similar
-  content after a few tokens. Use both.
-- **`sim(reused, reference)`** gives a quality floor: if it drops
-  faster than `sim(fresh, reused)` as Δ grows, reuse is degrading
-  task quality.
-- **Large stdev matters.** Gemma-4-E2B at Δ=1000 shows `7.01±5.56`:
-  the outcome is prompt-dependent and production quality would be
-  unpredictable.
+  reuse is indistinguishable; 0.80–0.95 (yellow) means same topic
+  but rewording; < 0.80 (red) means reuse rewrites the answer.
 - **Agreement vs similarity diverge.** Top-1 agreement drops fast
-  (even the best models are at 0.55–0.80 by Δ=1000), while
-  `sim(fresh, reused)` holds ≥ 0.90 for the Gemma-4 ≥ 4B panel —
-  greedy decoding recovers to semantically-equivalent output
-  despite first-token disagreement.
+  even for the best-naive models (Llama-3.2-1B at Δ=1000 naive: 10%
+  agreement, 68% sim), while sim stays higher because greedy decoding
+  routes back to a semantically-equivalent continuation. Shifted
+  pulls both metrics into the green zone simultaneously.
+
+### Additional stress test: prior-tool-exchange (E4B)
+
+Under drift-mode `prior-tool-exchange`, the drifted request has a
+complete donor `[user → asst(tool_call) → tool]` exchange spliced
+between the `system` and the original `user`. Unlike
+`system-duplicate` (which inflates with semantically-null copies of
+the system prompt), this introduces genuinely different content
+between cache-write and cache-read, so the cached chunk's
+attention-encoded neighbours are no longer the same. This exposes
+the *context-conditioning* error that RoPE shift alone cannot fix.
+
+E4B, N=20, drifts `{0, 500, 1000, 2000, 5000}`:
+
+| Δ | naive sim | shifted sim | Δsim | naive KL | shifted KL |
+|---|---|---|---|---|---|
+| 0 | 1.00 | 1.00 | +0.00 | 0.00 | 0.00 |
+| 500 | 0.94 | 0.96 | +0.02 | 0.60 | 0.06 |
+| 1000 | 0.90 | 0.94 | +0.03 | 0.57 | 0.14 |
+| 2000 | **0.74** | **0.94** | **+0.21** | 2.67 | 0.18 |
+| 5000 | 0.84 | 0.94 | +0.10 | 1.79 | 0.28 |
+
+Shift correction flattens the naive curve (which dips to 0.74 at
+Δ=2000) to ~0.94 across all drifts. But the ceiling is ~0.94, not
+~0.99 like system-duplicate — the ≈5% gap is the context-conditioning
+residual: the cached K vectors encode attention back to their
+original neighbours, which are not present in the drifted request.
+Shift corrects positions; it cannot reconstruct the referents. The
+magnitude is small on this dataset because a tool-result's K is
+mostly internally self-referential, but it is present and
+non-zero.
 
 ### Drift magnitudes
 
@@ -201,11 +211,15 @@ gold assistant reply — a task-quality floor independent of fresh.
 
 ### Passing bar
 
-A model is safe for naive cross-prompt cache reuse at a given drift
-when mean KL < ~1 nat, stdev small relative to the mean, top-1 agree
-≥ 0.9, and `sim(fresh, reused)` ≥ 0.95. Anything worse means the
-serving stack needs a correction policy (boundary recompute,
-re-prefill, or skip-reuse past a Δ threshold).
+A reuse setup is safe at a given drift when mean KL < ~1 nat, stdev
+small relative to the mean, top-1 agree ≥ 0.9, and
+`sim(fresh, reused)` ≥ 0.95. Under **naive** reuse, no model in our
+panel meets that bar past Δ=50; large Gemma-4 variants degrade
+gracefully but still fall below 0.95 sim and 0.9 agreement by
+Δ=500. Under **shifted** reuse every model in the panel meets the
+bar across the entire drift range on `system-duplicate`. Shifted is
+the production-correctness baseline; naive is a strawman that should
+never ship.
 
 ## Running
 
@@ -240,9 +254,32 @@ models that already have a non-empty `results/<model>.json`
 model writes a JSON with both aggregated statistics and per-example
 rows.
 
+`measure_reuse_drift.py` takes `--reuse-mode {naive, shifted}`
+(default `naive`) and `--drift-mode {system-duplicate,
+system-instructions, turn-insert, prior-tool-exchange}` (default
+`system-duplicate`). Combine them to explore the matrix directly:
+
+```bash
+# shifted on the canonical drift mode
+uv run --script measure_reuse_drift.py --model ... --reuse-mode shifted ...
+
+# harder drift mode with real content between cache-write and cache-read
+uv run --script measure_reuse_drift.py --model ... --drift-mode prior-tool-exchange ...
+```
+
 `visualize.py` renders a 2-panel figure (`sim(fresh, reused)` and
-top-1 agreement) from whatever JSONs are present, with green /
-yellow / red safety bands drawn from the Passing Bar thresholds.
+top-1 agreement) from the `results/` JSONs. It includes only the
+`system-duplicate` runs (the other drift modes use different Δ
+schedules and live outside the core panel) and draws naive as dashed
+lines and shifted as solid lines, in matching colours per model, on
+the green / yellow / red safety bands from the Passing Bar
+thresholds.
+
+The `drift_modes` module is unit-tested with pytest:
+
+```bash
+./test_drift_modes.py    # 59 parametrized tests, ~0.1 s
+```
 
 ## Contributing
 

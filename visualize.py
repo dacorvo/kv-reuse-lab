@@ -30,12 +30,24 @@ def _short(model_id: str) -> str:
 
 
 def load_results(dir_path: Path):
+    """Collect per-model rows for the canonical (naive + shifted) x
+    system-duplicate experiment. Legacy JSONs (pre-dating the
+    reuse_mode/drift_mode fields) are assumed to be naive +
+    system-duplicate, which matches the original harness default.
+    Any non-system-duplicate runs (prior-tool-exchange, etc.) are
+    ignored so the panel stays focused on the core comparison.
+    """
     rows = []
     for f in sorted(dir_path.glob("*.json")):
         data = json.loads(f.read_text())
+        drift_mode = data.get("drift_mode", "system-duplicate")
+        if drift_mode != "system-duplicate":
+            continue
+        reuse_mode = data.get("reuse_mode", "naive")
         drifts = sorted(int(d) for d in data["per_drift"])
         series = {
             "model": data["model"],
+            "reuse_mode": reuse_mode,
             "drifts": drifts,
             "n_examples": data.get("n_examples", "?"),
         }
@@ -66,16 +78,21 @@ def main():
     if not rows:
         raise SystemExit(f"no *.json files in {args.results_dir}")
 
-    # Color each model consistently across subplots.
+    # Color each model consistently across subplots and reuse modes.
+    models_in_order = sorted({r["model"] for r in rows})
     cmap = plt.get_cmap("tab10")
-    colors = {r["model"]: cmap(i % 10) for i, r in enumerate(rows)}
+    colors = {m: cmap(i % 10) for i, m in enumerate(models_in_order)}
+
+    # Line style per reuse mode.
+    style_by_mode = {"naive": "--", "shifted": "-"}
+    width_by_mode = {"naive": 1.6, "shifted": 2.4}
 
     n_examples = rows[0].get("n_examples", "?")
     fig, axes = plt.subplots(1, 2, figsize=(16, 7), sharex=True)
     fig.suptitle(
-        f"reagent — tool-result KV cache reuse sensitivity  "
-        f"(N={n_examples} Hermes examples, L=128 chunk)",
-        fontsize=14,
+        f"reagent — tool-result KV cache reuse sensitivity, system-duplicate drift  "
+        f"(N={n_examples} Hermes examples, L=128 chunk, solid=shifted, dashed=naive)",
+        fontsize=13,
     )
 
     # Safety bands. Green = safe to reuse, yellow = borderline, red = unsafe.
@@ -112,21 +129,33 @@ def main():
             xs = r["mean_actual_delta"]
             ys = r[key]
             c = colors[r["model"]]
-            label = _short(r["model"])
-            ax.plot(xs, ys, marker="o", linewidth=2.0, color=c, label=label, zorder=3)
+            ls = style_by_mode.get(r["reuse_mode"], "-")
+            lw = width_by_mode.get(r["reuse_mode"], 2.0)
+            # Only label the shifted line to keep the legend one-per-model.
+            label = _short(r["model"]) if r["reuse_mode"] == "shifted" else None
+            ax.plot(
+                xs,
+                ys,
+                marker="o",
+                linewidth=lw,
+                linestyle=ls,
+                color=c,
+                label=label,
+                zorder=3,
+            )
         ax.set_title(title)
         ax.set_ylabel(ylabel)
         ax.grid(True, alpha=0.3, zorder=1)
         ax.set_ylim(*ylim)
         ax.set_xlabel("actual drift Δ (tokens)")
 
-    # Put a single legend underneath all plots.
+    # Legend shows one entry per model (from the shifted lines).
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(
         handles,
         labels,
         loc="lower center",
-        ncol=min(len(rows), 6),
+        ncol=min(len(models_in_order), 6),
         frameon=False,
         bbox_to_anchor=(0.5, -0.01),
     )
