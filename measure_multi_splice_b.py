@@ -320,6 +320,9 @@ def run(args):
                 "b_len": len(b_toks),
                 "a_len": len(a_toks),
                 "n_matches": len(matches),
+                "match_spans": [
+                    [int(bs), int(be), int(as_), int(ae)] for bs, be, as_, ae in matches
+                ],
                 "covered_tokens": covered,
                 "coverage_frac": covered / max(1, len(b_toks)),
                 "longest_match": max(
