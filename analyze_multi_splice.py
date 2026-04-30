@@ -28,10 +28,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List
+
+
+_DIGIT_RUN = re.compile(r"(\d)\1{9,}")
+
+
+def _is_degenerate(text: str) -> bool:
+    """Spot generation collapses to a token-repetition attractor.
+
+    Triggered by 10+ identical digits in a row (e.g. ``1111111111``,
+    seen on Gemma-4 / Nemotron pandas-dev when prompt ends with
+    ``(#NNNNN)\\n``). Doesn't flag long runs of spaces or alpha
+    characters since those legitimately occur in code indentation
+    and decorative dividers.
+    """
+    return bool(text and _DIGIT_RUN.search(text))
 
 
 def _load(path: Path) -> tuple[str, List[dict]]:
@@ -71,9 +87,21 @@ def _bucket_sim(s: float) -> str:
 
 
 def _print_headline(label: str, rows: List[dict]) -> None:
-    sims = [r["sim_fresh_reused"] for r in rows]
+    """Print headline distribution. Auto-filters degenerate-generation
+    pairs (e.g. token-repetition attractors) and notes the count.
+    """
+    n_total = len(rows)
+    clean = [
+        r
+        for r in rows
+        if not _is_degenerate(r.get("fresh_text", "") or "")
+        and not _is_degenerate(r.get("reused_text", "") or "")
+    ]
+    n_degen = n_total - len(clean)
+    sims = [r["sim_fresh_reused"] for r in clean]
     n = len(sims)
-    print(f"\n=== {label}  (n={n}) ===")
+    deg_note = f" — dropped {n_degen} degenerate-generation pair(s)" if n_degen else ""
+    print(f"\n=== {label}  (n={n}/{n_total}{deg_note}) ===")
     if n == 0:
         return
     sims_sorted = sorted(sims)
@@ -141,12 +169,24 @@ def main() -> None:
     p.add_argument("paths", nargs="+", type=Path)
     args = p.parse_args()
 
-    loaded = [(label, rows) for label, rows in (_load(p) for p in args.paths)]
+    raw_loaded = [(label, rows) for label, rows in (_load(p) for p in args.paths)]
+    # Pre-filter degenerate-generation pairs once; pass the cleaned
+    # rows to bad-B detection and crosstab so they all use the same
+    # set as the headline.
+    loaded = []
+    for label, rows in raw_loaded:
+        clean = [
+            r
+            for r in rows
+            if not _is_degenerate(r.get("fresh_text", "") or "")
+            and not _is_degenerate(r.get("reused_text", "") or "")
+        ]
+        loaded.append((label, rows, clean))
 
-    for label, rows in loaded:
+    for label, rows, clean in loaded:
         _print_headline(label, rows)
-        _print_bad_bs(label, rows)
-        _print_crosstab(label, rows)
+        _print_bad_bs(label, clean)
+        _print_crosstab(label, clean)
 
 
 if __name__ == "__main__":
