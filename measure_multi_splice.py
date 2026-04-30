@@ -70,27 +70,95 @@ from similarity import load_embedder_and_cos_sim
 
 
 @torch.no_grad()
+def _sliding_window(model) -> int | None:
+    for root in (getattr(model, "model", None), model):
+        if root is None:
+            continue
+        for attr in ("language_model", ""):
+            inner = getattr(root, attr, None) if attr else root
+            if inner is None:
+                continue
+            cfg = getattr(inner, "config", None)
+            sw = getattr(cfg, "sliding_window", None) if cfg is not None else None
+            types = getattr(cfg, "layer_types", None) if cfg is not None else None
+            if (
+                sw is not None
+                and types is not None
+                and any(t == "sliding_attention" for t in types)
+            ):
+                return int(sw)
+    return None
+
+
+@torch.no_grad()
 def prefill_and_snapshot(model, input_ids: torch.Tensor, offload: str = "cpu"):
-    """Run a full prefill and return per-layer (K, V) snapshots.
-    By default snapshots are moved to CPU so that accumulating multiple
-    session caches doesn't exhaust GPU memory; the splice path moves
-    slices back to the target device just-in-time.
+    """Chunked prefill that returns per-layer FULL-sequence (K, V) snapshots.
+
+    On hybrid models with sliding-window attention (Gemma-3/3n/4), the
+    sliding cache truncates K/V to the last ``sliding_window-1`` tokens,
+    so a single full-sequence forward followed by a snapshot loses the
+    pre-truncation history. Splice schemes (especially scheme B in
+    measure_multi_splice_b.py) need the full-length K/V on every layer
+    to inject a cached match span at any absolute position.
+
+    The fix is chunked prefill aligned on the sliding-window length:
+    each chunk of length ``sliding_window-1`` fits in the sliding cache
+    without eviction, so reading the cache's tail after each chunk
+    yields exactly that chunk's K/V. Concatenating across chunks gives
+    the full per-layer history. Snapshots are offloaded to CPU.
+
+    Models without sliding attention (Llama etc.) do a single forward.
     """
     device = next(model.parameters()).device
     input_ids = input_ids.to(device)
-    out = model(input_ids=input_ids.unsqueeze(0), use_cache=True, logits_to_keep=1)
-    pkv = out.past_key_values
-    # Sync ALL devices before reading per-layer KV: device_map="balanced"
-    # spreads the prefill across cuda:0..N async, so writes to layer-N's K
-    # may not have completed by the time we detach() / .to() it.
-    if torch.cuda.is_available():
-        for d in range(torch.cuda.device_count()):
-            torch.cuda.synchronize(d)
-    kvs = []
-    for li in range(_num_layers(pkv)):
-        k, v = _layer_kv_tensors(pkv, li)
-        kvs.append((k.detach().to(offload), v.detach().to(offload)))
-    del out, pkv
+    T = input_ids.shape[0]
+    sw = _sliding_window(model)
+    chunk = (sw - 1) if sw is not None else T
+
+    past = None
+    n_layers: int | None = None
+    accum_k: List[List[torch.Tensor]] | None = None
+    accum_v: List[List[torch.Tensor]] | None = None
+
+    for s in range(0, T, chunk):
+        e = min(s + chunk, T)
+        chunk_ids = input_ids[s:e].unsqueeze(0)
+        positions = torch.arange(s, e, device=device)
+        out = model(
+            input_ids=chunk_ids,
+            past_key_values=past,
+            position_ids=positions.unsqueeze(0),
+            cache_position=positions,
+            use_cache=True,
+            logits_to_keep=1,
+        )
+        past = out.past_key_values
+        # Sync before reading per-layer KV — see comment in
+        # multi_splice_forward for the full rationale.
+        if torch.cuda.is_available():
+            for d in range(torch.cuda.device_count()):
+                torch.cuda.synchronize(d)
+        if n_layers is None:
+            n_layers = _num_layers(past)
+            accum_k = [[] for _ in range(n_layers)]
+            accum_v = [[] for _ in range(n_layers)]
+        chunk_len = e - s
+        for li in range(n_layers):
+            k_tensor, v_tensor = _layer_kv_tensors(past, li)
+            # chunk_len <= sliding_window-1 guarantees that the last
+            # `chunk_len` entries of the cache are exactly this chunk's
+            # K/V, on both sliding and full layers.
+            new_k = k_tensor[..., -chunk_len:, :].detach().to(offload)
+            new_v = v_tensor[..., -chunk_len:, :].detach().to(offload)
+            accum_k[li].append(new_k)
+            accum_v[li].append(new_v)
+        del out
+
+    kvs: List[Tuple[torch.Tensor, torch.Tensor]] = []
+    assert n_layers is not None and accum_k is not None and accum_v is not None
+    for li in range(n_layers):
+        kvs.append((torch.cat(accum_k[li], dim=-2), torch.cat(accum_v[li], dim=-2)))
+    del past
     return kvs
 
 
