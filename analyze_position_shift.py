@@ -77,6 +77,12 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("path", type=Path)
     p.add_argument("--model", required=True)
+    p.add_argument(
+        "--dataset",
+        default="swe-smith",
+        help="Source dataset key as passed to load_sessions "
+        "(swe-smith / nemotron-swe).",
+    )
     p.add_argument("--repo", default="django")
     p.add_argument("--n-sessions", type=int, default=20)
     p.add_argument("--max-tokens-per-session", type=int, default=12000)
@@ -98,6 +104,7 @@ def main() -> None:
         args.n_sessions,
         args.repo,
         args.max_tokens_per_session,
+        dataset=args.dataset,
     )
     iid_to_toks = {iid: ids for iid, ids in sessions}
     print(f"[info] loaded {len(sessions)} sessions")
