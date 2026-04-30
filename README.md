@@ -259,6 +259,58 @@ context diverges most (heuristic: short match + short tail + low
 longest-match fraction), most of the trace-analysis-reported ~29%
 per-turn coverage is safely reachable.
 
+#### Gemma-4 E4B vs Llama-3.2-1B head-to-head
+
+`google/gemma-4-E4B-it`, same django SWE-smith dataset, N=5 sessions
+(10 ordered pairs), `device_map="balanced"` across 4×A10G:
+
+| metric | Llama-3.2-1B (45 pairs) | Gemma-4 E4B (10 pairs) |
+|---|---|---|
+| sim(fresh, reused) mean | 0.97 | **0.997** |
+| sim(fresh, reused) median | 1.00 | 1.00 |
+| sim(fresh, reused) min | **0.71** | **0.978** |
+| sim ≥ 0.95 | 80% | **100%** |
+| top-1 agree | 44/45 | 10/10 |
+| KL mean | 0.02 | 0.001 |
+
+On the five (a, b) pairs that overlap between the two runs and that
+Llama-1B failed (sim < 0.95), Gemma-4 produces:
+
+| pair | Llama-1B sim | Gemma-4 sim |
+|---|---|---|
+| django-money → django-money | 0.905 | **0.978** |
+| django-money → daphne (1) | 0.709 | **1.000** |
+| django-money → daphne (2) | 0.795 | **1.000** |
+| django-money → daphne (3) | 0.878 | **1.000** |
+| channels → daphne | 0.875 | **1.000** |
+
+**Multi-segment shifted reuse is *more* tolerant on Gemma-4, not
+less.** Hypothesis: the hybrid (sliding + full) attention pattern
+limits how far the splice's context-conditioning error can propagate
+— sliding layers only see the last 511 tokens, so the corrupted
+attention-back-references in a short splice are bounded; full layers
+get full context but make up only 4 of every 6 layers (and only on
+the non-shared half). Combined with 2 KV heads (vs 8 on Llama-1B),
+the per-token attention surface where shift errors can compound is
+substantially smaller. Worth re-testing on a denser-attention model
+(e.g. Llama-3.1-8B) to confirm direction before generalising.
+
+#### Stabilising Gemma-4 multi-GPU
+
+`device_map="balanced"` triggered an illegal memory access on the
+first multi-splice attempt. Root cause: the prefill kernels are
+async and may still be writing to per-layer K/V on cuda:N when the
+host runs `del out; torch.cuda.empty_cache()` — `empty_cache`
+reclaims memory the in-flight kernels were targeting, leaving stale
+pointers that surface on the next CUDA op (the layer-5 read in our
+case, but it could surface anywhere). Fix in
+`measure_multi_splice.py`:
+synchronise every visible CUDA device immediately after each
+`model()` returns, *before* any teardown; drop the racing
+`empty_cache` from the hot path; sync each layer's GPU before
+slicing its cache. Llama path is unchanged (no sliding cache, no
+contention).
+
 ### Drift magnitudes
 
 | Δ | Realistic analogue |
