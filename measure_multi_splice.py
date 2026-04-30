@@ -36,11 +36,20 @@ their K/V reflects the shifted-chunk context. Scheme B might
 compensate for the context-conditioning mismatch that Scheme A
 amplifies; that's a follow-up.
 
-Dataset source: ``SWE-bench/SWE-smith-trajectories`` filtered to one
-repo (default ``django``). Each trajectory's final chat-template
-rendering is one "session"; each ordered pair (A, B) of trajectories
-produces 0+ matching byte-exact spans of length ≥ ``--min-match``.
-Pairs with no matches are skipped.
+Datasets (``--dataset``):
+    - ``swe-smith`` (default): ``SWE-bench/SWE-smith-trajectories``,
+      per-message JSON with optional tool_calls. ``--repo`` filters
+      by ``instance_id`` prefix (e.g. ``django``).
+    - ``nemotron-swe``: ``nvidia/Nemotron-RL-Agentic-SWE-Pivot-v1``,
+      OpenAI Responses-API flat items (message / reasoning /
+      function_call / function_call_output) under
+      ``responses_create_params.input``. ``--repo`` filters by
+      ``metadata.instance_id`` prefix (e.g. ``pandas-dev``).
+
+Each trajectory's final chat-template rendering is one "session";
+each ordered pair (A, B) of trajectories produces 0+ matching
+byte-exact spans of length ≥ ``--min-match``. Pairs with no
+matches are skipped.
 
 Usage:
     ./measure_multi_splice.py --model google/gemma-4-E4B-it \\
@@ -163,7 +172,7 @@ def prefill_and_snapshot(model, input_ids: torch.Tensor, offload: str = "cpu"):
 
 
 # ---------------------------------------------------------------------------
-# Dataset: django-filtered SWE-smith trajectories
+# Datasets — see ``_DATASETS`` below for the dispatch table.
 # ---------------------------------------------------------------------------
 
 
