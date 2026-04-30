@@ -295,6 +295,55 @@ the per-token attention surface where shift errors can compound is
 substantially smaller. Worth re-testing on a denser-attention model
 (e.g. Llama-3.1-8B) to confirm direction before generalising.
 
+#### Llama-3.1-8B head-to-head (N=20, 190 pairs, Scheme B)
+
+Re-run on the same django workload at scale:
+
+| metric | Llama-3.2-1B (45) | Gemma-4 E4B (190) | Llama-3.1-8B (190) |
+|---|---|---|---|
+| sim mean | 0.974 | 0.981 | 0.975 |
+| sim median | 1.00 | 1.00 | 1.00 |
+| **bit-exact** | 29% | 34% | **46%** |
+| sim < 0.95 | 20% | 15% | **9%** |
+| sim < 0.80 | 4% | **1%** | 5% |
+| **min sim** | 0.71 | **0.755** | **0.437** |
+
+Llama-8B has the **best typical case** but the **worst tail**:
+hybrid Gemma-4 floors at 0.755 while dense 8B can drop to 0.437.
+The "hybrid bounds error propagation" hypothesis from the 1B
+comparison holds — but the bound is on the **failure floor**, not
+the mean. 8B is bit-exact on 46% of pairs (best of three) and only
+fails on 9% (also best); when it fails, however, it fails harder.
+
+**Where the failures cluster.** From `analyze_position_shift.py`,
+the `max_b_pos × sim` crosstab on the 190-pair Llama-8B run:
+
+| max splice end pos in B | ≥0.99 | <0.80 | total | failure rate |
+|---|---|---|---|---|
+| < 6k tokens | 103 / 128 | 1 | 128 | <1% |
+| **6 – 10k tokens** | 13 / 32 | **9** | 32 | **28%** |
+| 10k+ tokens | 30 / 30 | 0 | 30 | 0% |
+
+The failure zone is splices landing **near the end of short B
+trajectories**. When B is ~7-11k tokens long and the deepest
+splice ends at 6-10k, the suffix has only 1-4k tokens to "wash
+out" the cache-conditioning mismatch before the final logit. When
+B is full-length (12k cap, 10k+ pos splices), there's enough tail
+to recover. When the splice lands in the first half (<6k),
+post-splice prefill conditions normally on its own. The middle is
+where errors don't have room to either bound or recover.
+
+This also explains the bad-B pattern: the three Llama-8B bad-Bs
+(daphne `ctrl_shuffle__suj4gnfr`, channels `ctrl_shuffle__btttplpd`,
+channels `class_rm_funcs__ldrdaw5e`) are all among the shortest
+sessions in the run (T=8k-11k vs the 12k cap), and consistently
+fail when reusing from other short A's. Bad-Bs are largely
+model-specific — Gemma-4's two bad-Bs (`class_rm_funcs__s49jtv5s`,
+`remove_loop__fp1iuyn2`) are *different* trajectories than 8B's,
+which suggests "bad B" is an interaction between session length
+and how each model's attention propagates splice errors, not a
+property intrinsic to the trajectory.
+
 #### Stabilising Gemma-4 multi-GPU
 
 `device_map="balanced"` triggered an illegal memory access on the
