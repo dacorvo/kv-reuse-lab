@@ -167,7 +167,24 @@ def prefill_and_snapshot(model, input_ids: torch.Tensor, offload: str = "cpu"):
 # ---------------------------------------------------------------------------
 
 
+def _strify(c) -> str:
+    if c is None:
+        return ""
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        out = []
+        for x in c:
+            if isinstance(x, dict):
+                out.append(x.get("text") or x.get("content") or "")
+            else:
+                out.append(str(x))
+        return " ".join(out)
+    return str(c)
+
+
 def _chatml_msgs(row) -> List[Dict[str, str]]:
+    """SWE-smith trajectory → normalized [{role, content}, ...]."""
     raw_msgs = row.get("messages")
     if isinstance(raw_msgs, str):
         msgs = json.loads(raw_msgs)
@@ -187,25 +204,110 @@ def _chatml_msgs(row) -> List[Dict[str, str]]:
     return norm
 
 
+def _nemotron_msgs(row) -> List[Dict[str, str]]:
+    """Nemotron-RL-Agentic-SWE-Pivot-v1 trajectory (OpenAI Responses-API
+    flat-item list) → normalized [{role, content}, ...].
+
+    Item types:
+        - plain {role, content}: kept as-is for system/user/assistant
+        - type=message: assistant text response (content is list of
+          {type:'output_text', text:...} dicts)
+        - type=reasoning: assistant chain-of-thought (summary list)
+        - type=function_call: assistant tool call (name + arguments)
+        - type=function_call_output: tool result, mapped to user role
+          (consistent with the swe-smith path: tool→user)
+    """
+    items = (row.get("responses_create_params") or {}).get("input") or []
+    norm: List[Dict[str, str]] = []
+    for m in items:
+        t = m.get("type")
+        if t is None:
+            role = m.get("role", "")
+            if role in ("system", "user", "assistant"):
+                norm.append({"role": role, "content": _strify(m.get("content"))})
+        elif t == "message":
+            role = m.get("role", "assistant")
+            if role not in ("system", "user", "assistant"):
+                role = "assistant"
+            norm.append({"role": role, "content": _strify(m.get("content"))})
+        elif t == "reasoning":
+            text = _strify(m.get("summary"))
+            if text:
+                norm.append({"role": "assistant", "content": f"<think>{text}</think>"})
+        elif t == "function_call":
+            payload = json.dumps(
+                {"name": m.get("name"), "arguments": m.get("arguments")},
+                ensure_ascii=False,
+            )
+            norm.append({"role": "assistant", "content": payload})
+        elif t == "function_call_output":
+            norm.append(
+                {
+                    "role": "user",
+                    "content": "Tool result: " + _strify(m.get("output")),
+                }
+            )
+    return norm
+
+
+_DATASETS: Dict[str, Dict] = {
+    # SWE-smith trajectories: per-message JSON with tool_calls.
+    "swe-smith": {
+        "id": "SWE-bench/SWE-smith-trajectories",
+        "split": "tool",
+        "id_field": "instance_id",
+        "to_msgs": _chatml_msgs,
+    },
+    # Nemotron-RL-Agentic-SWE-Pivot-v1: OpenAI Responses-API flat
+    # items at responses_create_params.input. instance_id lives in
+    # metadata.instance_id.
+    "nemotron-swe": {
+        "id": "nvidia/Nemotron-RL-Agentic-SWE-Pivot-v1",
+        "split": "train",
+        "id_field": ("metadata", "instance_id"),
+        "to_msgs": _nemotron_msgs,
+    },
+}
+
+
+def _id_of(row, field) -> str:
+    if isinstance(field, tuple):
+        cur = row
+        for k in field:
+            if cur is None:
+                return ""
+            cur = cur.get(k) if isinstance(cur, dict) else None
+        return cur or ""
+    return row.get(field, "") or ""
+
+
 def load_sessions(
-    tokenizer, n_sessions: int, repo_prefix: str, max_tokens: int
+    tokenizer,
+    n_sessions: int,
+    repo_prefix: str,
+    max_tokens: int,
+    dataset: str = "swe-smith",
 ) -> List[Tuple[str, List[int]]]:
-    """Return a list of (instance_id, token_ids) for up to n_sessions
-    django trajectories. Each token_ids is the FULL chat-rendered
-    prefix of the trajectory with add_generation_prompt=True, capped
-    at max_tokens.
+    """Return up to n_sessions (instance_id, token_ids) tuples from the
+    selected dataset, filtered to ids starting with ``repo_prefix``,
+    rendered through the model's chat template, capped at max_tokens.
+
+    Datasets available: see ``_DATASETS``.
     """
     from datasets import load_dataset
 
-    ds = load_dataset("SWE-bench/SWE-smith-trajectories", split="tool", streaming=True)
+    cfg = _DATASETS.get(dataset)
+    if cfg is None:
+        raise ValueError(f"unknown dataset {dataset!r}; choose from {list(_DATASETS)}")
+    ds = load_dataset(cfg["id"], split=cfg["split"], streaming=True)
     sessions: List[Tuple[str, List[int]]] = []
     for row in ds:
         if len(sessions) >= n_sessions:
             break
-        iid = row.get("instance_id", "")
+        iid = _id_of(row, cfg["id_field"])
         if not iid.startswith(repo_prefix):
             continue
-        msgs = _chatml_msgs(row)
+        msgs = cfg["to_msgs"](row)
         if not msgs:
             continue
         try:
@@ -229,6 +331,7 @@ def load_sessions(
     if len(sessions) < n_sessions:
         raise RuntimeError(
             f"only {len(sessions)}/{n_sessions} {repo_prefix}* sessions found "
+            f"in {cfg['id']!r} "
             f"(consider widening --max-tokens-per-session)"
         )
     return sessions
@@ -413,9 +516,17 @@ def multi_splice_forward(
 def run(args):
     tok = load_tokenizer(args)
 
-    print(f"[info] loading up to {args.n_sessions} {args.repo}* sessions", flush=True)
+    print(
+        f"[info] loading up to {args.n_sessions} {args.repo}* sessions "
+        f"from {args.dataset!r}",
+        flush=True,
+    )
     sessions = load_sessions(
-        tok, args.n_sessions, args.repo, args.max_tokens_per_session
+        tok,
+        args.n_sessions,
+        args.repo,
+        args.max_tokens_per_session,
+        dataset=args.dataset,
     )
     print(
         f"[info] collected {len(sessions)} sessions "
@@ -606,6 +717,16 @@ def run(args):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     add_model_args(p)
+    p.add_argument(
+        "--dataset",
+        default="swe-smith",
+        choices=sorted(_DATASETS),
+        help="Source dataset for trajectories. swe-smith uses "
+        "SWE-bench/SWE-smith-trajectories (per-message JSON); "
+        "nemotron-swe uses nvidia/Nemotron-RL-Agentic-SWE-Pivot-v1 "
+        "(OpenAI Responses-API flat items). Both render through the "
+        "model's chat template.",
+    )
     p.add_argument("--repo", default="django")
     p.add_argument("--n-sessions", type=int, default=10)
     p.add_argument("--max-tokens-per-session", type=int, default=15000)

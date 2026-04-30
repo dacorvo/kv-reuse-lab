@@ -221,9 +221,17 @@ def multi_splice_b_forward(
 def run(args):
     tok = load_tokenizer(args)
 
-    print(f"[info] loading up to {args.n_sessions} {args.repo}* sessions", flush=True)
+    print(
+        f"[info] loading up to {args.n_sessions} {args.repo}* sessions "
+        f"from {args.dataset!r}",
+        flush=True,
+    )
     sessions = load_sessions(
-        tok, args.n_sessions, args.repo, args.max_tokens_per_session
+        tok,
+        args.n_sessions,
+        args.repo,
+        args.max_tokens_per_session,
+        dataset=args.dataset,
     )
     print(
         f"[info] collected {len(sessions)} sessions "
@@ -398,6 +406,12 @@ def run(args):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     add_model_args(p)
+    p.add_argument(
+        "--dataset",
+        default="swe-smith",
+        choices=("swe-smith", "nemotron-swe"),
+        help="Source dataset (see measure_multi_splice.py for details).",
+    )
     p.add_argument("--repo", default="django")
     p.add_argument("--n-sessions", type=int, default=10)
     p.add_argument("--max-tokens-per-session", type=int, default=15000)
