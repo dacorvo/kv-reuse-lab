@@ -387,6 +387,37 @@ def _role_per_token(tokenizer, msgs) -> List[str]:
     return roles
 
 
+def _first_turn_end(tokenizer, msgs) -> int:
+    """Return the token index where the first turn ends. The first
+    turn is everything up to (and including) the last consecutive
+    leading non-assistant message — typically system + first user
+    + tool messages, before the first assistant response.
+
+    Standard prefix caching already handles the first turn (full
+    byte-match → cache hit, otherwise fresh prefill); it's never
+    the interesting case for cross-session splice measurement, so
+    matchers should skip any candidate match overlapping this
+    region.
+    """
+    if not msgs:
+        return 0
+    n_pre = 0
+    for m in msgs:
+        if m.get("role") == "assistant":
+            break
+        n_pre += 1
+    if n_pre == 0:
+        return 0
+    ids = tokenizer.apply_chat_template(msgs[:n_pre], tokenize=True, return_dict=True)[
+        "input_ids"
+    ]
+    if hasattr(ids, "tolist"):
+        ids = ids.tolist()
+    if ids and isinstance(ids[0], list):
+        ids = ids[0]
+    return len(ids)
+
+
 def _is_input_role(role: str) -> bool:
     """Input-only K/V cache rule: cache K/V from prefilled input
     tokens (system / user / tool messages) but NEVER from model-
@@ -407,19 +438,27 @@ def find_matches(
     min_n: int,
     target_roles: List[str] | None = None,
     prior_roles: List[str] | None = None,
+    target_first_turn_end: int = 0,
+    prior_first_turn_end: int = 0,
 ) -> List[Tuple[int, int, int, int]]:
     """Return non-overlapping (b_start, b_end, a_start, a_end) match
     spans where prior[a_start:a_end] == target[b_start:b_end],
     each of length ≥ min_n. Target-side greedy.
 
-    If ``target_roles`` and ``prior_roles`` are provided (per-token
-    role strings of the same length as ``target`` and ``prior``), any
-    match span that contains a non-input role token on EITHER side is
-    rejected — see _is_input_role for the rule. Cache reuse only
-    splices K/V from input tokens; matches that cross into a model-
-    generated assistant turn would transfer K/V the model produced
-    while attending to a session-specific upstream and is unsafe by
-    construction.
+    Two filters can be applied:
+
+    1. **Role filter** (when ``target_roles`` / ``prior_roles`` are
+       given): match spans containing any non-input-role token on
+       either side are rejected — cache reuse must only splice K/V
+       from prefilled input tokens, never from model-generated
+       assistant turns.
+
+    2. **First-turn skip** (when ``*_first_turn_end`` are non-zero):
+       match spans that overlap either side's first turn are rejected.
+       The first turn is the unit handled by standard prefix caching;
+       matches inside it are not interesting for cross-session splice
+       measurement. The matcher seeks splice candidates strictly past
+       the prefix-cache boundary.
     """
     index: Dict[int, List[int]] = {}
     if len(prior) < min_n:
@@ -429,7 +468,11 @@ def find_matches(
         index.setdefault(key, []).append(p)
     matches: List[Tuple[int, int, int, int]] = []
     T = len(target)
-    i = 0
+    # Skip the first turn on the target side: any candidate match
+    # starting at i < target_first_turn_end could only be a partial
+    # first-turn match, which is the prefix-cache regime, not a
+    # splice case.
+    i = max(0, target_first_turn_end)
     while i + min_n <= T:
         window = target[i : i + min_n]
         cands = index.get(hash(tuple(window)))
@@ -439,6 +482,11 @@ def find_matches(
         best_len = 0
         best_p = -1
         for p in cands:
+            # Skip prior-side first-turn candidates — same reasoning
+            # as on target side, the match would be inside the
+            # prefix-cache regime.
+            if p < prior_first_turn_end:
+                continue
             if prior[p : p + min_n] != window:
                 continue
             ext = min_n
