@@ -296,10 +296,16 @@ def load_sessions(
     repo_prefix: str,
     max_tokens: int,
     dataset: str = "swe-smith",
-) -> List[Tuple[str, List[int]]]:
-    """Return up to n_sessions (instance_id, token_ids) tuples from the
-    selected dataset, filtered to ids starting with ``repo_prefix``,
-    rendered through the model's chat template, capped at max_tokens.
+    with_roles: bool = False,
+) -> List[Tuple[str, List[int]]] | List[Tuple[str, List[int], List[str]]]:
+    """Return up to n_sessions session tuples from the selected dataset,
+    filtered to ids starting with ``repo_prefix``, rendered through
+    the model's chat template, capped at max_tokens.
+
+    With ``with_roles=False`` (default): list of ``(iid, ids)``.
+    With ``with_roles=True``: list of ``(iid, ids, roles)`` where
+    ``roles[i]`` is the message role string for token ``ids[i]``,
+    suitable to pass into ``find_matches`` for input-only matching.
 
     Datasets available: see ``_DATASETS``.
     """
@@ -336,7 +342,14 @@ def load_sessions(
             continue
         if len(ids) < 512:
             continue
-        sessions.append((iid, ids))
+        if with_roles:
+            roles = _role_per_token(tokenizer, msgs)[: len(ids)]
+            # Pad if rendering quirks left roles shorter than ids
+            while len(roles) < len(ids):
+                roles.append("template")
+            sessions.append((iid, ids, roles))
+        else:
+            sessions.append((iid, ids))
     if len(sessions) < n_sessions:
         raise RuntimeError(
             f"only {len(sessions)}/{n_sessions} {repo_prefix}* sessions found "
@@ -351,12 +364,62 @@ def load_sessions(
 # ---------------------------------------------------------------------------
 
 
+def _role_per_token(tokenizer, msgs) -> List[str]:
+    """Render messages incrementally and label each token with the
+    role of the message it belongs to. Returns a list of role strings
+    of length == len(full-rendered tokens). Tokens added by the chat
+    template AFTER the last message (e.g. add_generation_prompt
+    trailers) are labelled "template".
+    """
+    roles: List[str] = []
+    prev_len = 0
+    for i in range(len(msgs)):
+        ids = tokenizer.apply_chat_template(
+            msgs[: i + 1], tokenize=True, return_dict=True
+        )["input_ids"]
+        if hasattr(ids, "tolist"):
+            ids = ids.tolist()
+        if ids and isinstance(ids[0], list):
+            ids = ids[0]
+        cur_len = len(ids)
+        roles.extend([msgs[i]["role"]] * (cur_len - prev_len))
+        prev_len = cur_len
+    return roles
+
+
+def _is_input_role(role: str) -> bool:
+    """Input-only K/V cache rule: cache K/V from prefilled input
+    tokens (system / user / tool messages) but NEVER from model-
+    generated tokens (assistant turns, including any reasoning the
+    agent emitted as part of the trajectory). The trajectories in
+    swe-smith / nemotron-swe come from real agent runs, so each
+    "assistant" message in the rendered conversation is in fact
+    *generated text* the model produced — its K/V is context-bound
+    to that specific session's upstream and CANNOT be safely spliced
+    across sessions even when the surface text matches.
+    """
+    return role in ("system", "user", "tool")
+
+
 def find_matches(
-    target: List[int], prior: List[int], min_n: int
+    target: List[int],
+    prior: List[int],
+    min_n: int,
+    target_roles: List[str] | None = None,
+    prior_roles: List[str] | None = None,
 ) -> List[Tuple[int, int, int, int]]:
     """Return non-overlapping (b_start, b_end, a_start, a_end) match
     spans where prior[a_start:a_end] == target[b_start:b_end],
     each of length ≥ min_n. Target-side greedy.
+
+    If ``target_roles`` and ``prior_roles`` are provided (per-token
+    role strings of the same length as ``target`` and ``prior``), any
+    match span that contains a non-input role token on EITHER side is
+    rejected — see _is_input_role for the rule. Cache reuse only
+    splices K/V from input tokens; matches that cross into a model-
+    generated assistant turn would transfer K/V the model produced
+    while attending to a session-specific upstream and is unsafe by
+    construction.
     """
     index: Dict[int, List[int]] = {}
     if len(prior) < min_n:
@@ -388,6 +451,24 @@ def find_matches(
         if best_len < min_n:
             i += 1
             continue
+        # Trim the match if either side enters a non-input role.
+        if target_roles is not None and prior_roles is not None:
+            allowed = best_len
+            for k in range(best_len):
+                if k < len(target_roles) - i and not _is_input_role(
+                    target_roles[i + k]
+                ):
+                    allowed = k
+                    break
+                if k < len(prior_roles) - best_p and not _is_input_role(
+                    prior_roles[best_p + k]
+                ):
+                    allowed = k
+                    break
+            if allowed < min_n:
+                i += 1
+                continue
+            best_len = allowed
         matches.append((i, i + best_len, best_p, best_p + best_len))
         i += best_len
     return matches
