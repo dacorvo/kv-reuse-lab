@@ -405,6 +405,74 @@ Bad-B detected: ``pandas-dev__pandas-...674a37ecd...`` (5/7 of its
 ≥40%-cov reuses below 0.95, mean 0.79, min 0.66). Same "bad-B has
 hostile body content boundary" mechanism.
 
+#### Predicting splice safety at write time
+
+Read-time prediction (computing some property of A and B at the
+moment we splice) is the wrong place to add intelligence: the
+information you need is the K/V conditioning at A's chunk, which
+exists only at write time when A's full prefix was being processed.
+Two experiments test what *write-time* signals predict the measured
+splice safety.
+
+**Setup.** On the 56-pair Gemma-4 / Nemotron-pandas-dev run, for
+each session we:
+
+1. Re-run a forward pass capturing attention weights or K/V at the
+   body-match band positions ([pos 1900-4200]).
+2. Compute three candidate predictors of "intrinsic cacheability":
+   - **Attention locality**: fraction of attention mass in the last
+     W=256 tokens, averaged over heads and full-attention layers.
+   - **Attention entropy**: Shannon entropy of the attention
+     distribution at each chunk position, averaged similarly.
+   - **K/V perturbation distance**: replace A's prefix with another
+     session's prefix (chunk content kept at same position), forward
+     again, measure ∥K_real − K_perturbed∥ / ∥K_real∥. Direct
+     ground-truth measure of "does this chunk's K/V depend on the
+     specific prefix or just on local content?". n=10 alternative
+     prefixes per session.
+3. Aggregate per pair (using A's chunk slice for write-time
+   prediction) and Pearson-correlate against measured
+   ``sim_fresh_reused``.
+
+**Results — write-time signals exist but are modest.**
+
+| predictor | r vs sim |
+|---|---|
+| attention locality (W=256) | +0.04 (none) |
+| attention entropy at chunk (A) | **+0.30** |
+| attention entropy at chunk (B) | **+0.36** |
+| effective support 1/Σp² (A) | +0.30 |
+| K/V perturbation L2 (A) | -0.25 |
+| K/V perturbation cosine (A) | -0.26 |
+
+Two surprises:
+
+1. **The sign is positive for entropy** — high attention entropy at
+   the chunk → safer splice. The intuition: when attention spreads
+   broadly across the prefix, no single prior token contributes
+   much, so K/V is robust to perturbations of any specific token.
+   Concentrated attention (low entropy) makes K/V sensitive to a
+   few "key" tokens — and if those differ between A and B, the
+   splice transfers stale conditioning.
+2. **The cheap entropy proxy is roughly as predictive as the
+   expensive K/V perturbation experiment** (r ≈ 0.30 vs −0.25). The
+   K/V perturbation result is stable under n=3 and n=10
+   perturbations, so this isn't a noise ceiling — it's a real
+   signal-strength ceiling.
+
+**Implication.** A write-time *bitmap* labelling chunks as
+"high-entropy/safe" vs "low-entropy/risky" is a usable soft
+predictor — you could skip the bottom ~15% of candidate chunks and
+remove most of the catastrophic splice failures without burning
+attention. But the explained variance is only ~9-11% (r² ≈ 0.10),
+so this won't act as a hard guarantee. The remaining residual
+variance probably comes from per-pair interactions (B's specific
+prefix content) that no per-A write-time measurement can capture.
+
+The two experiment scripts (``experiment_attention_locality.py``
+and ``experiment_kv_perturbation.py``) are reproducible on any
+multi_splice result file with ``match_spans``.
+
 #### Stabilising Gemma-4 multi-GPU
 
 `device_map="balanced"` triggered an illegal memory access on the
