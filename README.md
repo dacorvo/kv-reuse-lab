@@ -344,6 +344,67 @@ which suggests "bad B" is an interaction between session length
 and how each model's attention propagates splice errors, not a
 property intrinsic to the trajectory.
 
+#### Cross-dataset: Nemotron pandas-dev vs SWE-smith django (Gemma-4)
+
+Same model (Gemma-4 E4B), same harness, swapped to
+``nvidia/Nemotron-RL-Agentic-SWE-Pivot-v1`` filtered to
+``pandas-dev`` instances. The two workloads stress the splice
+mechanism in *different* regimes:
+
+| metric | django SWE-smith (190) | pandas-dev Nemotron (56) |
+|---|---|---|
+| matched pairs / ordered | 190 / 190 | 59 / 190 |
+| median coverage | 2.2% | **22.0%** |
+| p90 coverage | 11.7% | 30.7% |
+| median longest match | 263 tok | **2062 tok** |
+| sim mean | 0.981 | 0.961 |
+| bit-exact | 34% | 16% |
+| sim < 0.80 | **1%** | **11%** |
+| min sim | 0.755 | 0.659 |
+
+(56/59 reported above: 3 pairs dropped as token-repetition
+attractors — Gemma-4 enters a ``111…`` collapse on one specific B
+session whose user prompt ends with ``(#NNNNN)\n``, an OOD
+continuation pattern; ``analyze_multi_splice.py`` filters these
+automatically so they don't contaminate the headline.)
+
+The shape of failure is **inverted** between datasets:
+
+| coverage band | django ≥0.99 / total | pandas-dev ≥0.99 / total |
+|---|---|---|
+| 0-5% | 123/146 (84%) | 10/10 (100%) |
+| 5-20% | 25/31 (81%) | 11/15 (73%) |
+| 20-50% | 2/9 (22%) | 16/21 (76%) |
+| **50+%** | 3/4 (75%) | **2/10 (20%)** ← 5 sub-0.80! |
+
+On django, splices are mostly small (median 2.2% cov) and rare
+high-cov ones happen to be clean. On pandas-dev, every same-prompt
+pair has a ~2k-token zero-shift prefix match (system + initial
+user message) plus a smaller mid-trajectory match — so coverage is
+dominated by that one big prefix span. The prefix match is a no-op
+(shift=0, byte-exact context), so the real splice action is the
+second body-match. **When the body-match's a-side body content
+differs sharply from the b-side body content at the boundary, the
+context-conditioning discontinuity propagates badly through the
+remaining suffix**, and 50% of the 50%+-cov pairs end up sub-0.80.
+
+This regime — long shared prefix + smaller body chunk — matches
+what production cache-reuse engines see far more closely than
+django's many-small-mid-trajectory-matches profile. It also
+isolates the failure mechanism: **|position shift| ≤ 500 tokens
+on every bad pair**, so it's not a RoPE phase issue. The failure
+is the body-splice boundary discontinuity, full stop.
+
+Position-shift analyzer on pandas-dev confirms: 57/59 pairs have
+\|max_shift\| < 500 tok; the failure zone is splices ending at B
+position 1-3k (i.e. body-match landing in the first third of a
+~7-9k token trajectory), where the suffix is too short to recover
+context.
+
+Bad-B detected: ``pandas-dev__pandas-...674a37ecd...`` (5/7 of its
+≥40%-cov reuses below 0.95, mean 0.79, min 0.66). Same "bad-B has
+hostile body content boundary" mechanism.
+
 #### Stabilising Gemma-4 multi-GPU
 
 `device_map="balanced"` triggered an illegal memory access on the
