@@ -311,6 +311,49 @@ synchronise every visible CUDA device immediately after each
 slicing its cache. Llama path is unchanged (no sliding cache, no
 contention).
 
+#### Scheme B — chunked prefill with cache injection
+
+Scheme A (above) prefills all of B[:last_match_end] with the model,
+then overwrites matched spans with shifted A K/V, then forwards the
+suffix. On Gemma-family hybrid (sliding + full) attention the suffix
+forward is forced one-token-at-a-time (heterogeneous per-layer cache
+lengths reject batched forwards), and dominates wallclock — ~16
+min/pair on Gemma-4 E4B at 12k context.
+
+`measure_multi_splice_b.py` (Scheme B) walks B left-to-right with
+sliding-window-aligned chunked prefill on gap segments, and for each
+match span injects the cached A K/V directly via
+`past.layers[li].update(K, V)` — *no* model forward on match
+tokens, true skip. The matching prerequisite is that `cached_a_kvs`
+captures full per-layer history; this is now done by chunking
+`prefill_and_snapshot` itself at `sliding_window-1` (each chunk fits
+in the sliding cache without truncation, so the cache-tail snapshot
+after each chunk is exactly that chunk's K/V on every layer).
+
+Validated on Gemma-4 E4B, same N=5 / 10-ordered-pair django config
+as Scheme A:
+
+| | Scheme A | Scheme B |
+|---|---|---|
+| sim(fresh, reused) mean | 0.9973 | **0.9974** |
+| sim median | 0.9997 | **1.0000** |
+| sim min | 0.978 | 0.978 |
+| KL mean | 7e-4 | 1.2e-3 |
+| top-1 agree | 10/10 | 10/10 |
+| **wallclock (10 pairs)** | **~2.5 hours** | **~9 minutes** |
+
+Per-pair Δsim is within ±0.001 on every pair — statistically
+identical correctness, ~17× faster. Scheme B is a drop-in
+replacement and is the recommended harness for any further
+multi-splice work on hybrid-attention models.
+
+The replay test `test_multi_splice_b.py` exercises five sequence
+lengths around the sliding window (sw/2, sw-1, sw+1, 2·sw, 4·sw) on
+both Llama and Gemma-4, asserting top-1 stability and reporting
+top-5 overlap and relative logit divergence. fp32 round-trip is
+~1e-4 max-rel; bf16 multi-chunk inputs see 1–6% rel diff from
+SDPA reduction-order rounding (next-token decision unchanged).
+
 ### Drift magnitudes
 
 | Δ | Realistic analogue |
@@ -387,28 +430,36 @@ the green / yellow / red safety bands from the Passing Bar
 thresholds.
 
 Multi-segment shifted reuse (the gap-stitching experiment from
-the Results section) is run separately:
+the Results section) has two harnesses:
 
 ```bash
+# Scheme A — post-prefill overwrite, original.
 uv run --script measure_multi_splice.py \
     --model meta-llama/Llama-3.2-1B-Instruct \
     --repo django --n-sessions 10 --min-match 128 \
     --output results/multi_splice_django_llama1b.json
+
+# Scheme B — chunked prefill with cache injection (~17× faster on
+# Gemma-family, identical correctness; recommended for hybrid models).
+uv run --script measure_multi_splice_b.py \
+    --model google/gemma-4-E4B-it \
+    --repo django --n-sessions 10 --min-match 128 \
+    --output results/multi_splice_b_django_gemma4.json
 ```
 
-`measure_multi_splice.py` loads SWE-smith trajectories filtered by
-repo prefix, finds every byte-exact ≥ `--min-match`-token span
-between each ordered pair of sessions (A, B), and per pair overwrites
-B's prefill cache with A's shifted K/V at each match, then compares
-the tail generation against a fully-fresh B forward. Results append
-to a `.jsonl` sidecar so a crashed run can resume from where it
-stopped.
+Both load SWE-smith trajectories filtered by repo prefix, find
+every byte-exact ≥ `--min-match`-token span between each ordered
+pair of sessions (A, B), and per pair compare a multi-spliced
+forward against a fully-fresh B forward. Results append to a
+`.jsonl` sidecar so a crashed run can resume from where it stopped.
 
-The `drift_modes` and `kv_cache` modules are unit-tested with pytest:
+Tests:
 
 ```bash
-./test_drift_modes.py    # 59 parametrized tests, ~0.1 s
-./test_kv_cache.py       # 5 tests covering write_kv_span routing
+./test_drift_modes.py     # 59 parametrized tests on drift_modes, ~0.1 s
+./test_kv_cache.py        # 5 tests on write_kv_span routing
+./test_multi_splice_b.py --model meta-llama/Llama-3.2-1B-Instruct \
+    --device-map cuda:0   # Scheme B replay self-consistency
 ```
 
 ## Contributing
