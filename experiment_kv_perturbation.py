@@ -121,12 +121,14 @@ def _full_layer_mask(model) -> List[bool] | None:
     return None
 
 
-def _kv_relative_distance(kvs_a, kvs_b, full_mask=None) -> float:
-    """Average relative L2 distance ||a-b||/||a|| over full-attention
-    layers (or all if no mask), keys and values combined.
+def _kv_distances(kvs_a, kvs_b, full_mask=None) -> dict:
+    """Average per-token distances between two K/V slices over
+    full-attention layers (keys and values combined). Returns a dict
+    with both relative L2 and cosine *dis*-similarity (1 - cos_sim).
     """
     n_layers = len(kvs_a)
-    rel = []
+    rel_l2 = []
+    cos_dis = []
     for li in range(n_layers):
         if full_mask is not None and not full_mask[li]:
             continue
@@ -135,12 +137,21 @@ def _kv_relative_distance(kvs_a, kvs_b, full_mask=None) -> float:
         if ka is None or kb is None:
             continue
         for x, y in ((ka, kb), (va, vb)):
-            num = (x - y).flatten().norm().item()
-            den = max(x.flatten().norm().item(), 1e-9)
-            rel.append(num / den)
-    if not rel:
-        return float("nan")
-    return sum(rel) / len(rel)
+            xf = x.flatten().float()
+            yf = y.flatten().float()
+            num = (xf - yf).norm().item()
+            den = max(xf.norm().item(), 1e-9)
+            rel_l2.append(num / den)
+            # Cosine: 1 - <x,y>/(||x|| ||y||)
+            dot = (xf * yf).sum().item()
+            denom = max(xf.norm().item() * yf.norm().item(), 1e-9)
+            cos_dis.append(1.0 - dot / denom)
+    if not rel_l2:
+        return {"rel_l2": float("nan"), "cos_dis": float("nan")}
+    return {
+        "rel_l2": sum(rel_l2) / len(rel_l2),
+        "cos_dis": sum(cos_dis) / len(cos_dis),
+    }
 
 
 def _pearson(xs: List[float], ys: List[float]) -> float:
@@ -239,39 +250,43 @@ def main() -> None:
             torch.cuda.empty_cache()
             continue
 
-        rel_dists = []
+        rel_l2_list = []
+        cos_dis_list = []
         for k_pert in range(1, args.n_perturb + 1):
             alt_idx = (idx + k_pert) % len(iids_in_order)
             alt_iid = iids_in_order[alt_idx]
             alt_toks = iid_to_toks[alt_iid]
             if len(alt_toks) < bs:
                 continue
-            # Build perturbed sequence: alt's first bs tokens + a's
-            # chunk content [bs:be] (so chunk content stays the same
-            # at the same positions, only the prefix changes).
             pert = list(alt_toks[:bs]) + list(a_clip[bs:be])
             try:
                 kv_alt = _kv_at_chunk(
                     model, torch.tensor(pert, dtype=torch.long), bs, be
                 )
-                d = _kv_relative_distance(kv_real, kv_alt, full_mask)
-                rel_dists.append(d)
+                d = _kv_distances(kv_real, kv_alt, full_mask)
+                rel_l2_list.append(d["rel_l2"])
+                cos_dis_list.append(d["cos_dis"])
             except torch.cuda.OutOfMemoryError as e:
                 print(f"[err] OOM on pert {k_pert}: {e}", flush=True)
                 torch.cuda.empty_cache()
 
         per_session_pert[iid] = {
             "span": [bs, be],
-            "rel_kv_distances": rel_dists,
-            "mean_rel_kv_dist": (
-                sum(rel_dists) / len(rel_dists) if rel_dists else float("nan")
+            "rel_l2": rel_l2_list,
+            "cos_dis": cos_dis_list,
+            "mean_rel_l2": (
+                sum(rel_l2_list) / len(rel_l2_list) if rel_l2_list else float("nan")
+            ),
+            "mean_cos_dis": (
+                sum(cos_dis_list) / len(cos_dis_list) if cos_dis_list else float("nan")
             ),
         }
         elapsed = time.time() - t0
         print(
             f"[info] [{idx + 1}/{len(iids_in_order)}]  {iid[-25:]:25s}  "
-            f"span=[{bs}:{be}]  n_pert={len(rel_dists)}  "
-            f"mean_rel_dist={per_session_pert[iid]['mean_rel_kv_dist']:.3f}  "
+            f"span=[{bs}:{be}]  n_pert={len(rel_l2_list)}  "
+            f"l2={per_session_pert[iid]['mean_rel_l2']:.3f}  "
+            f"cos={per_session_pert[iid]['mean_cos_dis']:.3f}  "
             f"elapsed={elapsed:.0f}s",
             flush=True,
         )
@@ -280,17 +295,17 @@ def main() -> None:
             json.dumps({"model": args.model, "per_session": per_session_pert}, indent=2)
         )
 
-    # Correlate: for each pair, look up B's mean_rel_kv_dist (the
-    # write-time predictor for B's chunk). Higher distance = less
-    # cacheable = expect lower sim_fresh_reused.
     pair_records = []
     for r in rows:
         b_id = r["b_id"]
         a_id = r["a_id"]
         if b_id not in per_session_pert:
             continue
-        b_dist = per_session_pert[b_id]["mean_rel_kv_dist"]
-        a_dist = per_session_pert.get(a_id, {}).get("mean_rel_kv_dist", float("nan"))
+        b_l2 = per_session_pert[b_id]["mean_rel_l2"]
+        b_cos = per_session_pert[b_id]["mean_cos_dis"]
+        a_info = per_session_pert.get(a_id, {})
+        a_l2 = a_info.get("mean_rel_l2", float("nan"))
+        a_cos = a_info.get("mean_cos_dis", float("nan"))
         pair_records.append(
             {
                 "a_id": a_id,
@@ -298,8 +313,10 @@ def main() -> None:
                 "sim_fresh_reused": r["sim_fresh_reused"],
                 "coverage_frac": r["coverage_frac"],
                 "n_matches": r["n_matches"],
-                "a_kv_dist": a_dist,
-                "b_kv_dist": b_dist,
+                "a_l2": a_l2,
+                "b_l2": b_l2,
+                "a_cos": a_cos,
+                "b_cos": b_cos,
             }
         )
 
@@ -318,18 +335,24 @@ def main() -> None:
     def isnum(v):
         return v == v and v is not None
 
-    valid = [r for r in pair_records if isnum(r["a_kv_dist"]) and isnum(r["b_kv_dist"])]
-    print(f"\n=== correlation summary ({len(valid)} pairs) ===")
-    if valid:
+    for metric in ("l2", "cos"):
+        valid = [
+            r
+            for r in pair_records
+            if isnum(r[f"a_{metric}"]) and isnum(r[f"b_{metric}"])
+        ]
+        if not valid:
+            continue
         sims = [r["sim_fresh_reused"] for r in valid]
-        a_d = [r["a_kv_dist"] for r in valid]
-        b_d = [r["b_kv_dist"] for r in valid]
+        a_d = [r[f"a_{metric}"] for r in valid]
+        b_d = [r[f"b_{metric}"] for r in valid]
         mx = [max(x, y) for x, y in zip(a_d, b_d)]
         mn = [min(x, y) for x, y in zip(a_d, b_d)]
-        print(f"  a_kv_dist  ↔ sim_fresh_reused : r = {_pearson(a_d, sims):+.3f}")
-        print(f"  b_kv_dist  ↔ sim_fresh_reused : r = {_pearson(b_d, sims):+.3f}")
-        print(f"  max(a,b)   ↔ sim_fresh_reused : r = {_pearson(mx, sims):+.3f}")
-        print(f"  min(a,b)   ↔ sim_fresh_reused : r = {_pearson(mn, sims):+.3f}")
+        print(f"\n=== {metric} K/V distance correlation ({len(valid)} pairs) ===")
+        print(f"  a_{metric}     ↔ sim : r = {_pearson(a_d, sims):+.3f}")
+        print(f"  b_{metric}     ↔ sim : r = {_pearson(b_d, sims):+.3f}")
+        print(f"  max(a,b) ↔ sim : r = {_pearson(mx, sims):+.3f}")
+        print(f"  min(a,b) ↔ sim : r = {_pearson(mn, sims):+.3f}")
 
     print(f"[info] total elapsed {time.time() - t0:.0f}s", flush=True)
 
