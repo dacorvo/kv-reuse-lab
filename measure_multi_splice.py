@@ -80,12 +80,17 @@ def prefill_and_snapshot(model, input_ids: torch.Tensor, offload: str = "cpu"):
     input_ids = input_ids.to(device)
     out = model(input_ids=input_ids.unsqueeze(0), use_cache=True, logits_to_keep=1)
     pkv = out.past_key_values
+    # Sync ALL devices before reading per-layer KV: device_map="balanced"
+    # spreads the prefill across cuda:0..N async, so writes to layer-N's K
+    # may not have completed by the time we detach() / .to() it.
+    if torch.cuda.is_available():
+        for d in range(torch.cuda.device_count()):
+            torch.cuda.synchronize(d)
     kvs = []
     for li in range(_num_layers(pkv)):
         k, v = _layer_kv_tensors(pkv, li)
         kvs.append((k.detach().to(offload), v.detach().to(offload)))
     del out, pkv
-    torch.cuda.empty_cache()
     return kvs
 
 
@@ -261,8 +266,15 @@ def multi_splice_forward(
     prefill_ids = session_b_ids[:last_b_end].unsqueeze(0).to(device)
     out = model(input_ids=prefill_ids, use_cache=True, logits_to_keep=1)
     past = out.past_key_values
+    # Sync ALL devices BEFORE any teardown / cache-free: device_map="balanced"
+    # spreads the prefill across cuda:0..N async, and `torch.cuda.empty_cache()`
+    # below could otherwise reclaim memory still being written to by the
+    # prefill kernels on a different device, leaving stale pointers that
+    # surface as illegal memory access on the next CUDA op.
+    if torch.cuda.is_available():
+        for d in range(torch.cuda.device_count()):
+            torch.cuda.synchronize(d)
     del out
-    torch.cuda.empty_cache()
     # Overwrite each matched span per-layer with shifted A K + A V.
     for b_start, b_end, a_start, a_end in matches:
         shift = b_start - a_start
@@ -273,6 +285,10 @@ def multi_splice_forward(
                 # Sliding-window cache: the target span might not exist at
                 # this layer. Skip silently.
                 continue
+            # Pre-read sync on this layer's GPU: ensures the prefill's
+            # writes here are visible before we slice / .to into it.
+            if k_tensor.is_cuda:
+                torch.cuda.synchronize(k_tensor.device)
             kA = cached_a_kvs[li][0][..., a_start:a_end, :]
             vA = cached_a_kvs[li][1][..., a_start:a_end, :]
             kA_dev = kA.to(k_tensor.device, k_tensor.dtype)
@@ -283,6 +299,15 @@ def multi_splice_forward(
             if kA_dev.shape[-2] != span_len:
                 continue
             write_kv_span(past, model, li, slice(b_start, b_end), kA_dev, vA)
+    # device_map="balanced" puts cache layers on different GPUs. The
+    # cross-GPU `kA.to(target_device)` + `copy_` sequence inside
+    # `write_kv_span` is async; without a sync, the next forward can
+    # read torn / stale K/V on whichever device finished last and crash
+    # with an illegal memory access. Sync every visible CUDA device once
+    # after the overwrite loop completes.
+    if torch.cuda.is_available():
+        for d in range(torch.cuda.device_count()):
+            torch.cuda.synchronize(d)
     # Forward the remaining tokens of B one at a time so they attend
     # to the (partially overwritten) cache.
     remaining = session_b_ids[last_b_end:T]

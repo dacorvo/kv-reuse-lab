@@ -343,6 +343,14 @@ def main():
                     )
                 write_kv_span(past_reused, model, li, dst, kb_shifted, vb)
 
+            # device_map="balanced" puts cache layers on different GPUs.
+            # `kA.to(target_device)` + `copy_` inside write_kv_span is
+            # async; sync all devices before the next forward to avoid
+            # torn reads / illegal memory access on Gemma-family.
+            if torch.cuda.is_available():
+                for d in range(torch.cuda.device_count()):
+                    torch.cuda.synchronize(d)
+
             remaining = drifted_stream[tool_end_drift:T_d]
             if remaining.shape[0] > 0:
                 reused_logits = forward_with_cache(
