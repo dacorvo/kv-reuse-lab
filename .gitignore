@@ -5,6 +5,7 @@ sandbox/
 
 # Directory-level ignores only — no individual files below.
 /results/
+/runs/
 __pycache__/
 .ruff_cache/
 *.pyc

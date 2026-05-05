@@ -7,6 +7,11 @@ data-analytical question: **how often do cache hits actually occur
 in real agent workloads, and are they single contiguous spans or
 multi-segment?**
 
+> Terminology — **CP** (Common Prefix) and **post-prefix matches** —
+> is defined in [../README.md](../README.md#concepts). The numbers
+> below currently report raw byte-recurrence (CP + post-prefix
+> together); separating the two is on the to-do list.
+
 ## Why this matters
 
 A serving engine can only benefit from cache reuse if the new

@@ -28,6 +28,77 @@ matching llama.cpp's `llama_memory_seq_add`).
   arbitrary interior spans (fragments that cross turn boundaries,
   non-structural subsequences). See "Future directions".
 
+## Concepts
+
+A small glossary so the rest of the docs stop drifting. Two concepts
+do most of the work.
+
+### Common Prefix (CP)
+
+For any two requests `A` and `B`, the **Common Prefix** is the byte-
+stable token region they share starting at position 0:
+
+```
+A:  [t0, t1, t2, t3, t4, t5, ...]
+B:  [t0, t1, t2, X,  Y,  Z,  ...]
+                 ↑
+                 CP ends here (length 3)
+```
+
+CP is per-pair. Across three or more requests we sometimes talk about
+"the CP across a session" or "the CP across the corpus" — those are
+just the pairwise CP intersected over more requests.
+
+CP is what a **standard prefix cache** can serve: bytes 0 through
+`CP-1` are byte-identical to a previously-prefilled request, so the
+cache hits; at byte `CP` the bytes diverge, the cache misses, and
+from there on it's fresh prefill. Every production serving stack
+ships some form of prefix cache, so CP coverage is the *baseline* —
+it's what you get without any of the work this project measures.
+
+### Post-prefix matches
+
+A **post-prefix match** is any byte-exact run of ≥ N tokens between
+two requests that starts at a position past either side's CP. By
+construction it cannot be served by a prefix cache: at least one of
+the two requests already diverged from the other before this match
+begins.
+
+Post-prefix matches are the regime reagent's measurements are about.
+They come from two sources:
+
+- **Mid-prefix injection breaks the CP early.** Hermes injects a
+  `MEMORY (your personal notes)` block between the system prompt and
+  the tools schema. The system-prompt bytes are identical across two
+  sessions, but as soon as memory differs, CP ends — even though
+  ~10k bytes of byte-identical tools-schema sit right after, those
+  bytes are now post-prefix on every cross-session pair.
+- **Recurring content past the first turn.** Tool responses (file
+  reads, web fetches, command outputs, skill loads) that recur across
+  sessions when the same user/team repeats similar work.
+
+Both sources need a cache that can match against the *content* of a
+chunk, not just the offset. llama.cpp's `--cache-reuse` is the only
+production stack that does this today, with two limitations: it can
+only stitch one contiguous post-prefix run, and it identifies hits
+by sliding byte-search rather than by chunk identity.
+
+### Why the distinction matters
+
+Most analyses in this repo report two related-but-different numbers:
+
+- **Coverage** — how much of a request is matched by *something*
+  earlier, regardless of whether it's CP or post-prefix. Useful for
+  comparing corpora.
+- **Post-prefix coverage** — how much is matched past CP. This is
+  what only a non-trivial cache can serve, and the load-bearing
+  number for whether the cache earns its keep on a given workload.
+
+Tools in `trace_analysis/` should report both, with the difference
+explicit. A high coverage that's mostly CP means "your prefix cache
+is doing its job on this corpus"; a high post-prefix coverage means
+"there's substrate worth a runtime cache."
+
 ## What we are testing
 
 Agent servers would like to cache tool results (file contents,

@@ -1,0 +1,344 @@
+{
+  "source": "hf://buckets/dacorvo/agentcaps-traces/hermes-gemma-4-E4B-it",
+  "model": "google/gemma-4-E4B-it",
+  "min_match": 128,
+  "n_sessions": 27,
+  "n_requests": 305,
+  "n_requests_with_post_prefix_match": 290,
+  "total_target_tokens": 4867855,
+  "total_matched_tokens": 4160524,
+  "total_cp_tokens": 1314673,
+  "total_post_prefix_tokens": 2845851,
+  "by_category": [
+    {
+      "category": "tools_schema",
+      "tokens": 2759180,
+      "frac_of_matched": 0.6631808877920186,
+      "n_matches": 290,
+      "mean_match_length": 9514.413793103447,
+      "median_match_length": 9514.0,
+      "max_match_length": 9515,
+      "samples": [
+        {
+          "request_id": "2372d8cf2ce04751a4e0cc2c4b1b1bf9",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4750,
+            14264
+          ],
+          "tokens": 9514,
+          "role": "system",
+          "snippet": "\nModel: google/gemma-4-E4B-it\nProvider: custom\n\nYou are a CLI AI Agent. Try not to use markdown but simple text renderable inside a terminal. File delivery: there is no attachment channel \u2014 the user reads your response directly in their terminal. Do NOT emit MEDIA:/path tags (those are only intercepted on messaging platforms like Telegram, Discord,"
+        },
+        {
+          "request_id": "5d932bbcb19841cb9773121ae22bc2a9",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4750,
+            14264
+          ],
+          "tokens": 9514,
+          "role": "system",
+          "snippet": "\nModel: google/gemma-4-E4B-it\nProvider: custom\n\nYou are a CLI AI Agent. Try not to use markdown but simple text renderable inside a terminal. File delivery: there is no attachment channel \u2014 the user reads your response directly in their terminal. Do NOT emit MEDIA:/path tags (those are only intercepted on messaging platforms like Telegram, Discord,"
+        },
+        {
+          "request_id": "c577a84948224beb9780601901486ea2",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4750,
+            14264
+          ],
+          "tokens": 9514,
+          "role": "system",
+          "snippet": "\nModel: google/gemma-4-E4B-it\nProvider: custom\n\nYou are a CLI AI Agent. Try not to use markdown but simple text renderable inside a terminal. File delivery: there is no attachment channel \u2014 the user reads your response directly in their terminal. Do NOT emit MEDIA:/path tags (those are only intercepted on messaging platforms like Telegram, Discord,"
+        },
+        {
+          "request_id": "66dee93ab8f94911b7a5ade51aa104db",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4750,
+            14264
+          ],
+          "tokens": 9514,
+          "role": "system",
+          "snippet": "\nModel: google/gemma-4-E4B-it\nProvider: custom\n\nYou are a CLI AI Agent. Try not to use markdown but simple text renderable inside a terminal. File delivery: there is no attachment channel \u2014 the user reads your response directly in their terminal. Do NOT emit MEDIA:/path tags (those are only intercepted on messaging platforms like Telegram, Discord,"
+        }
+      ]
+    },
+    {
+      "category": "common_prefix_served_by_prefix_cache",
+      "tokens": 1314673,
+      "frac_of_matched": 0.31598736120738635,
+      "n_matches": 290,
+      "mean_match_length": 4533.355172413793,
+      "median_match_length": 4721.0,
+      "max_match_length": 4765,
+      "samples": [
+        {
+          "request_id": "2372d8cf2ce04751a4e0cc2c4b1b1bf9",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            0,
+            4722
+          ],
+          "tokens": 4722,
+          "role": "system",
+          "snippet": "<bos><|turn>system\nYou are Hermes Agent, an intelligent AI assistant created by Nous Research. You are helpful, knowledgeable, and direct. You assist users with a wide range of tasks including answering questions, writing and editing code, analyzing information, creative work, and executing actions via your tools. You communicate clearly, admit uncertainty when appropriate, and prioritize being genuinely useful over being verbose unless otherwise directed below."
+        },
+        {
+          "request_id": "5d932bbcb19841cb9773121ae22bc2a9",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            0,
+            4722
+          ],
+          "tokens": 4722,
+          "role": "system",
+          "snippet": "<bos><|turn>system\nYou are Hermes Agent, an intelligent AI assistant created by Nous Research. You are helpful, knowledgeable, and direct. You assist users with a wide range of tasks including answering questions, writing and editing code, analyzing information, creative work, and executing actions via your tools. You communicate clearly, admit uncertainty when appropriate, and prioritize being genuinely useful over being verbose unless otherwise directed below."
+        },
+        {
+          "request_id": "c577a84948224beb9780601901486ea2",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            0,
+            4722
+          ],
+          "tokens": 4722,
+          "role": "system",
+          "snippet": "<bos><|turn>system\nYou are Hermes Agent, an intelligent AI assistant created by Nous Research. You are helpful, knowledgeable, and direct. You assist users with a wide range of tasks including answering questions, writing and editing code, analyzing information, creative work, and executing actions via your tools. You communicate clearly, admit uncertainty when appropriate, and prioritize being genuinely useful over being verbose unless otherwise directed below."
+        },
+        {
+          "request_id": "66dee93ab8f94911b7a5ade51aa104db",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            0,
+            4722
+          ],
+          "tokens": 4722,
+          "role": "system",
+          "snippet": "<bos><|turn>system\nYou are Hermes Agent, an intelligent AI assistant created by Nous Research. You are helpful, knowledgeable, and direct. You assist users with a wide range of tasks including answering questions, writing and editing code, analyzing information, creative work, and executing actions via your tools. You communicate clearly, admit uncertainty when appropriate, and prioritize being genuinely useful over being verbose unless otherwise directed below."
+        }
+      ]
+    },
+    {
+      "category": "system_other",
+      "tokens": 55983,
+      "frac_of_matched": 0.013455757015222121,
+      "n_matches": 16,
+      "mean_match_length": 3498.9375,
+      "median_match_length": 3732.0,
+      "max_match_length": 3732,
+      "samples": [
+        {
+          "request_id": "352fc0e8a08240a8806cba06e3c5e582",
+          "session_id": "d2aaab8239e5",
+          "tok_range": [
+            1033,
+            4765
+          ],
+          "tokens": 3732,
+          "role": "system",
+          "snippet": "\n\n## Skills (mandatory)\nBefore replying, scan the skills below. If a skill matches or is even partially relevant to your task, you MUST load it with skill_view(name) and follow its instructions. Err on the side of loading \u2014 it is always better to have context you don't need than to miss critical steps, pitfalls, or established workflows. Skills contain specialized knowledge \u2014"
+        },
+        {
+          "request_id": "916ba917257641519788b4a036a6a220",
+          "session_id": "d2aaab8239e5",
+          "tok_range": [
+            1033,
+            4765
+          ],
+          "tokens": 3732,
+          "role": "system",
+          "snippet": "\n\n## Skills (mandatory)\nBefore replying, scan the skills below. If a skill matches or is even partially relevant to your task, you MUST load it with skill_view(name) and follow its instructions. Err on the side of loading \u2014 it is always better to have context you don't need than to miss critical steps, pitfalls, or established workflows. Skills contain specialized knowledge \u2014"
+        },
+        {
+          "request_id": "9fd390ef8d2343a5bdace963738e9bd4",
+          "session_id": "d2aaab8239e5",
+          "tok_range": [
+            1033,
+            4765
+          ],
+          "tokens": 3732,
+          "role": "system",
+          "snippet": "\n\n## Skills (mandatory)\nBefore replying, scan the skills below. If a skill matches or is even partially relevant to your task, you MUST load it with skill_view(name) and follow its instructions. Err on the side of loading \u2014 it is always better to have context you don't need than to miss critical steps, pitfalls, or established workflows. Skills contain specialized knowledge \u2014"
+        },
+        {
+          "request_id": "52b04161de0f4d748f1d4f5fec70cab0",
+          "session_id": "d2aaab8239e5",
+          "tok_range": [
+            1033,
+            4765
+          ],
+          "tokens": 3732,
+          "role": "system",
+          "snippet": "\n\n## Skills (mandatory)\nBefore replying, scan the skills below. If a skill matches or is even partially relevant to your task, you MUST load it with skill_view(name) and follow its instructions. Err on the side of loading \u2014 it is always better to have context you don't need than to miss critical steps, pitfalls, or established workflows. Skills contain specialized knowledge \u2014"
+        }
+      ]
+    },
+    {
+      "category": "tool_response",
+      "tokens": 28655,
+      "frac_of_matched": 0.006887353612189234,
+      "n_matches": 30,
+      "mean_match_length": 955.1666666666666,
+      "median_match_length": 128.0,
+      "max_match_length": 3238,
+      "samples": [
+        {
+          "request_id": "9a3953a68c57430e996ae2ca9ef5bd6b",
+          "session_id": "b2c7d5c4a842",
+          "tok_range": [
+            14341,
+            14469
+          ],
+          "tokens": 128,
+          "role": "tool",
+          "snippet": "' not found.\", \"available_skills\": [\"dogfood\", \"yuanbao\", \"claude-code\", \"codex\", \"hermes-agent\", \"opencode\", \"architecture-diagram\", \"ascii-art\", \"ascii-video\", \"baoyu-comic\", \"baoyu-infographic\", \"claude-design\", \"comfyui\", \"design-md"
+        },
+        {
+          "request_id": "549df62245ce4cc4855a5d362adf6ac9",
+          "session_id": "b2c7d5c4a842",
+          "tok_range": [
+            14341,
+            14469
+          ],
+          "tokens": 128,
+          "role": "tool",
+          "snippet": "' not found.\", \"available_skills\": [\"dogfood\", \"yuanbao\", \"claude-code\", \"codex\", \"hermes-agent\", \"opencode\", \"architecture-diagram\", \"ascii-art\", \"ascii-video\", \"baoyu-comic\", \"baoyu-infographic\", \"claude-design\", \"comfyui\", \"design-md"
+        },
+        {
+          "request_id": "549df62245ce4cc4855a5d362adf6ac9",
+          "session_id": "b2c7d5c4a842",
+          "tok_range": [
+            14479,
+            17717
+          ],
+          "tokens": 3238,
+          "role": "tool",
+          "snippet": "response:skills_list{value:<|\"|>{\"success\": true, \"skills\": [{\"name\": \"dogfood\", \"description\": \"Exploratory QA of web apps: find bugs, evidence, reports.\", \"category\": null}, {\"name\": \"yuanbao\", \"description\": \"Yuanbao (\u5143\u5b9d) groups: @mention users, query info/members.\", \"category\":"
+        },
+        {
+          "request_id": "7065bf6e1ff7436b93bcd7d1b249e3f2",
+          "session_id": "b2c7d5c4a842",
+          "tok_range": [
+            14341,
+            14469
+          ],
+          "tokens": 128,
+          "role": "tool",
+          "snippet": "' not found.\", \"available_skills\": [\"dogfood\", \"yuanbao\", \"claude-code\", \"codex\", \"hermes-agent\", \"opencode\", \"architecture-diagram\", \"ascii-art\", \"ascii-video\", \"baoyu-comic\", \"baoyu-infographic\", \"claude-design\", \"comfyui\", \"design-md"
+        }
+      ]
+    },
+    {
+      "category": "user_content",
+      "tokens": 1665,
+      "frac_of_matched": 0.0004001899760703219,
+      "n_matches": 302,
+      "mean_match_length": 5.513245033112582,
+      "median_match_length": 4.0,
+      "max_match_length": 28,
+      "samples": [
+        {
+          "request_id": "2372d8cf2ce04751a4e0cc2c4b1b1bf9",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            14264,
+            14267
+          ],
+          "tokens": 3,
+          "role": "user",
+          "snippet": "<|turn>user\n"
+        },
+        {
+          "request_id": "5d932bbcb19841cb9773121ae22bc2a9",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            14264,
+            14267
+          ],
+          "tokens": 3,
+          "role": "user",
+          "snippet": "<|turn>user\n"
+        },
+        {
+          "request_id": "c577a84948224beb9780601901486ea2",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            14264,
+            14267
+          ],
+          "tokens": 3,
+          "role": "user",
+          "snippet": "<|turn>user\n"
+        },
+        {
+          "request_id": "66dee93ab8f94911b7a5ade51aa104db",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            14264,
+            14267
+          ],
+          "tokens": 3,
+          "role": "user",
+          "snippet": "<|turn>user\n"
+        }
+      ]
+    },
+    {
+      "category": "assistant_output_should_not_be_cached",
+      "tokens": 368,
+      "frac_of_matched": 8.845039711344051e-05,
+      "n_matches": 44,
+      "mean_match_length": 8.363636363636363,
+      "median_match_length": 5.0,
+      "max_match_length": 15,
+      "samples": [
+        {
+          "request_id": "549df62245ce4cc4855a5d362adf6ac9",
+          "session_id": "b2c7d5c4a842",
+          "tok_range": [
+            14469,
+            14479
+          ],
+          "tokens": 10,
+          "role": "assistant",
+          "snippet": "<|tool_call>call:skills_list{{}}<tool_call|><|tool_response>"
+        },
+        {
+          "request_id": "7065bf6e1ff7436b93bcd7d1b249e3f2",
+          "session_id": "b2c7d5c4a842",
+          "tok_range": [
+            14469,
+            14479
+          ],
+          "tokens": 10,
+          "role": "assistant",
+          "snippet": "<|tool_call>call:skills_list{{}}<tool_call|><|tool_response>"
+        },
+        {
+          "request_id": "60b3f97ee21f4f21a3df4beae6e5a331",
+          "session_id": "b2c7d5c4a842",
+          "tok_range": [
+            14469,
+            14479
+          ],
+          "tokens": 10,
+          "role": "assistant",
+          "snippet": "<|tool_call>call:skills_list{{}}<tool_call|><|tool_response>"
+        },
+        {
+          "request_id": "128b7ef14f644769841c41bce1195fbe",
+          "session_id": "b2c7d5c4a842",
+          "tok_range": [
+            14469,
+            14479
+          ],
+          "tokens": 10,
+          "role": "assistant",
+          "snippet": "<|tool_call>call:skills_list{{}}<tool_call|><|tool_response>"
+        }
+      ]
+    }
+  ]
+}

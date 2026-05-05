@@ -6,6 +6,8 @@
 #   "transformers>=5.5",
 #   "jinja2>=3.0",
 #   "matplotlib>=3.8",
+#   "pyarrow>=15",
+#   "huggingface_hub>=0.25",
 # ]
 # ///
 """Measure cross-request KV-cache-reuse *opportunity* in real agent
@@ -252,10 +254,133 @@ def _claude_hyperswitch_sessions(
         yielded += 1
 
 
+def _stream_agentcap_rows(source: str):
+    """Iterate dict rows from one of:
+      - ``hf://buckets/<owner>/<name>[/<prefix>]``  (streamed via HfFileSystem)
+      - a directory of ``*.parquet``               (streamed via pyarrow)
+      - a single ``*.parquet`` file                (streamed via pyarrow)
+      - an HF Dataset folder produced by ``agentcap export --format hf``
+
+    No file download; bucket reads stream straight from the Hub via fsspec.
+    """
+    import pyarrow.parquet as pq
+
+    cols = ["request_id", "model", "captured_at", "request", "n_tokens", "rendered_tokens"]
+
+    if source.startswith("hf://"):
+        from huggingface_hub import HfFileSystem
+
+        fs = HfFileSystem()
+        files = sorted(fs.glob(source.rstrip("/") + "/**/*.parquet"))
+        if not files:
+            files = sorted(fs.glob(source.rstrip("/") + "/*.parquet"))
+        if not files:
+            raise FileNotFoundError(f"no parquet files under {source!r}")
+        for path in files:
+            with fs.open(path, "rb") as fh:
+                pf = pq.ParquetFile(fh)
+                for batch in pf.iter_batches(batch_size=32, columns=cols):
+                    for row in batch.to_pylist():
+                        yield row
+        return
+
+    p = Path(source)
+    if p.is_dir() and (p / "dataset_info.json").exists():
+        from datasets import load_from_disk
+
+        for row in load_from_disk(str(p)):
+            yield row
+        return
+
+    if p.is_file() and p.suffix == ".parquet":
+        files = [p]
+    elif p.is_dir():
+        files = sorted(p.glob("*.parquet"))
+        if not files:
+            raise FileNotFoundError(f"no parquet files in {source!r}")
+    else:
+        raise FileNotFoundError(f"agentcap source not recognised: {source!r}")
+    for path in files:
+        pf = pq.ParquetFile(str(path))
+        for batch in pf.iter_batches(batch_size=32, columns=cols):
+            for row in batch.to_pylist():
+                yield row
+
+
+def _agentcap_sessions(
+    tokenizer,
+    n_sessions: int,
+    *,
+    source: str,
+    model_filter: str | None = None,
+) -> Iterable[Tuple[str, List[List[int]]]]:
+    """Stream agentcap-exported rows, group by session, yield prefilled
+    request token lists in capture order.
+
+    Session id = stable hash of the first user message's content. Every
+    chat-completion the agent makes on one task shares that first user
+    message verbatim — Hermes's internal skill_view / memory / tool-call
+    loops, plus the multi-turn follow-ups — so this groups all of them
+    together as one session.
+
+    Tokens come from the row's ``rendered_tokens`` (model-specific,
+    baked at export time). The ``tokenizer`` parameter is accepted for
+    interface parity with the other adapters but ignored.
+    """
+    import hashlib
+
+    del tokenizer  # the rendered tokens are already model-specific
+
+    grouped: Dict[str, List[Tuple[int, int, List[int]]]] = {}
+    skipped_no_user = 0
+    skipped_model = 0
+    for row in _stream_agentcap_rows(source):
+        if model_filter and row.get("model") != model_filter:
+            skipped_model += 1
+            continue
+        msgs = (row.get("request") or {}).get("messages") or []
+        first_user = next(
+            (m.get("content") for m in msgs if m.get("role") == "user"),
+            None,
+        )
+        if not first_user:
+            skipped_no_user += 1
+            continue
+        sid = hashlib.sha1(str(first_user).encode("utf-8")).hexdigest()[:12]
+        grouped.setdefault(sid, []).append(
+            (
+                int(row.get("captured_at", 0)),
+                int(row.get("n_tokens", 0)),
+                list(row["rendered_tokens"]),
+            )
+        )
+
+    if not grouped:
+        raise SystemExit(
+            f"no agentcap rows yielded from {source!r} "
+            f"(skipped: {skipped_no_user} without a user message, "
+            f"{skipped_model} not matching --model-filter)"
+        )
+
+    # Stable session order: by earliest captured_at within each group.
+    sids = sorted(grouped.keys(), key=lambda s: min(t for t, _, _ in grouped[s]))
+    yielded = 0
+    for sid in sids:
+        if yielded >= n_sessions:
+            break
+        items = grouped[sid]
+        # Within a session: capture-time then prompt-length tiebreak.
+        items.sort(key=lambda x: (x[0], x[1]))
+        prefixes = [ids for _, _, ids in items]
+        yield (f"agentcap-{sid}", prefixes)
+        yielded += 1
+
+
 DATASETS = {
     "hermes": _hermes_sessions,
     "swe-smith": _swe_smith_sessions,
     "claude-hs": _claude_hyperswitch_sessions,
+    "agentcap": _agentcap_sessions,
 }
 
 
@@ -391,6 +516,34 @@ def intra_request_duplicates(
     return duplicates
 
 
+def _max_common_prefix(
+    target: List[int],
+    prior_sequences: List[List[int]],
+    prior_sessions: List[str],
+    exclude_session: str,
+) -> int:
+    """Return the longest leading-token run that ``target`` shares
+    with any allowed prior — i.e., ``max_{prior} k s.t.
+    prior[:k] == target[:k]``. This is the byte-stable common
+    prefix (CP) and also the upper bound on what a standard prefix
+    cache could serve for ``target``. Returns 0 if no prior shares
+    so much as the first token.
+    """
+    cp = 0
+    for si, prior in enumerate(prior_sequences):
+        if prior_sessions[si] == exclude_session:
+            continue
+        L = min(len(prior), len(target))
+        if L == 0 or prior[0] != target[0]:
+            continue
+        k = 1
+        while k < L and prior[k] == target[k]:
+            k += 1
+        if k > cp:
+            cp = k
+    return cp
+
+
 def _find_matches_filtered(
     target: List[int],
     prior_sequences: List[List[int]],
@@ -398,14 +551,19 @@ def _find_matches_filtered(
     index: Dict[int, List[Tuple[int, int]]],
     min_n: int,
     exclude_session: str,
+    skip_to: int = 0,
 ) -> List[Tuple[int, int]]:
     """Find non-overlapping ≥``min_n``-token matches of ``target`` in
     any prior sequence with ``prior_sessions[seq_idx] !=
     exclude_session``. Each candidate is verified on the first
     ``min_n`` tokens (hash collisions can produce spurious hits).
+
+    ``skip_to`` lets the caller start the target-side scan past a
+    fixed offset — typically the CP boundary, so the matcher returns
+    only post-prefix matches.
     """
     matches: List[Tuple[int, int]] = []
-    i = 0
+    i = max(0, skip_to)
     T = len(target)
     while i + min_n <= T:
         window = target[i : i + min_n]
@@ -468,12 +626,26 @@ def run(
     out_path: Path,
     max_tokens_per_session: int,
     repo_filter: str | None = None,
+    agentcap_source: str | None = None,
+    model_filter: str | None = None,
 ):
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
+    if dataset == "agentcap":
+        if not agentcap_source:
+            raise SystemExit(
+                "--dataset agentcap requires --agentcap-source "
+                "(local parquet path or hf://buckets/<owner>/<name>[/<prefix>])"
+            )
+        tokenizer = None  # rendered_tokens already encode the right tokenizer
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
+
     fetch = DATASETS[dataset]
-    label = dataset + (f" (repo={repo_filter})" if repo_filter else "")
+    if dataset == "agentcap":
+        label = f"agentcap ({agentcap_source})"
+    else:
+        label = dataset + (f" (repo={repo_filter})" if repo_filter else "")
     print(f"[info] loading up to {n_sessions} {label} sessions", flush=True)
 
     # Collect all requests across sessions, keeping provenance. Cap each
@@ -481,10 +653,24 @@ def run(
     # datasets with very long trajectories (SWE-smith in particular).
     if dataset == "swe-smith":
         source = fetch(tokenizer, n_sessions, repo_filter=repo_filter)
+    elif dataset == "agentcap":
+        if repo_filter:
+            print("[warn] --repo-filter ignored for dataset=agentcap", flush=True)
+        source = fetch(
+            tokenizer,
+            n_sessions,
+            source=agentcap_source,
+            model_filter=model_filter,
+        )
     else:
         if repo_filter:
             print(
                 f"[warn] --repo-filter ignored for dataset={dataset}",
+                flush=True,
+            )
+        if model_filter:
+            print(
+                f"[warn] --model-filter ignored for dataset={dataset}",
                 flush=True,
             )
         source = fetch(tokenizer, n_sessions)
@@ -511,12 +697,28 @@ def run(
     tagged_index: Dict[Tuple[int, ...], List[Tuple[int, int]]] = {}
     per_request: List[dict] = []
     for idx, (session_id, req_idx, ids) in enumerate(requests):
-        # Lookup: find matches against priors with a session_id != ours.
-        spans = _find_matches_filtered(
-            ids, prior_sequences, prior_sessions, tagged_index, min_n, session_id
+        # CP: longest leading-token run target shares with any allowed
+        # prior. A standard prefix cache could serve bytes [0, cp) for
+        # this target. Anything past cp is post-prefix territory — the
+        # regime a non-trivial cache (llama.cpp --cache-reuse, reagent's
+        # mechanism) is for.
+        cp = _max_common_prefix(
+            ids, prior_sequences, prior_sessions, session_id
         )
-        covered = sum(end - start for start, end in spans)
-        longest = max((end - start for start, end in spans), default=0)
+        # Find post-prefix matches only (skip the byte-stable region).
+        spans = _find_matches_filtered(
+            ids, prior_sequences, prior_sessions, tagged_index, min_n,
+            session_id, skip_to=cp,
+        )
+        post_covered = sum(end - start for start, end in spans)
+        post_longest = max((end - start for start, end in spans), default=0)
+        # Total = CP + post-prefix matches (non-overlapping by construction).
+        # Note: cp counts as "coverage" only if cp >= min_n, to stay
+        # comparable with the existing min-n floor. Below min_n the
+        # prefix is too short to be meaningfully cached anyway.
+        cp_covered = cp if cp >= min_n else 0
+        total_covered = cp_covered + post_covered
+        total_longest = max(cp_covered, post_longest)
         # Intra-request duplicates: same ≥min_n span appearing twice
         # inside this prompt. Gap-stitching could serve the second
         # occurrence from the KV of the first — the "same file read
@@ -526,11 +728,22 @@ def run(
         dup_longest = max((end - start for start, end, _ in dups), default=0)
         stats = {
             "target_len": len(ids),
-            "covered_tokens": covered,
-            "longest_match": longest,
-            "n_fragments": len(spans),
-            "coverage_frac": covered / max(len(ids), 1),
-            "longest_frac": longest / max(len(ids), 1),
+            # Total recurrence (CP + post-prefix). Comparable to old
+            # coverage_frac numbers in prior reports.
+            "covered_tokens": total_covered,
+            "longest_match": total_longest,
+            "n_fragments": len(spans) + (1 if cp_covered else 0),
+            "coverage_frac": total_covered / max(len(ids), 1),
+            "longest_frac": total_longest / max(len(ids), 1),
+            # CP: served by a standard prefix cache.
+            "cp_tokens": cp,
+            "cp_frac": cp / max(len(ids), 1),
+            # Post-prefix: only served by a non-trivial cache.
+            "post_prefix_covered_tokens": post_covered,
+            "post_prefix_longest_match": post_longest,
+            "post_prefix_n_fragments": len(spans),
+            "post_prefix_coverage_frac": post_covered / max(len(ids), 1),
+            "post_prefix_longest_frac": post_longest / max(len(ids), 1),
             "intra_dup_tokens": dup_covered,
             "intra_dup_longest": dup_longest,
             "intra_n_duplicates": len(dups),
@@ -566,10 +779,24 @@ def run(
         "coverage_frac": _summarize(per_request, "coverage_frac"),
         "longest_frac": _summarize(per_request, "longest_frac"),
         "n_fragments": _summarize(per_request, "n_fragments"),
+        "cp_frac": _summarize(per_request, "cp_frac"),
+        "post_prefix_coverage_frac": _summarize(
+            per_request, "post_prefix_coverage_frac"
+        ),
+        "post_prefix_longest_frac": _summarize(
+            per_request, "post_prefix_longest_frac"
+        ),
+        "post_prefix_n_fragments": _summarize(
+            per_request, "post_prefix_n_fragments"
+        ),
         "intra_dup_frac": _summarize(per_request, "intra_dup_frac"),
         "intra_n_duplicates": _summarize(per_request, "intra_n_duplicates"),
-        "frac_with_multi_segment": sum(1 for r in per_request if r["n_fragments"] >= 2)
-        / len(per_request),
+        "frac_with_multi_segment_post_prefix": sum(
+            1 for r in per_request if r["post_prefix_n_fragments"] >= 2
+        ) / len(per_request),
+        "frac_with_any_post_prefix": sum(
+            1 for r in per_request if r["post_prefix_covered_tokens"] > 0
+        ) / len(per_request),
         "frac_with_intra_dup": sum(
             1 for r in per_request if r["intra_n_duplicates"] >= 1
         )
@@ -602,35 +829,44 @@ def _print_summary(s: dict):
     )
     print(f"min match: {s['min_match_tokens']} tokens")
     print()
-    print(f"                     {'mean':>8} {'median':>8} {'p90':>8} {'max':>8}")
+    print(f"                              {'mean':>8} {'median':>8} {'p90':>8} {'max':>8}")
     for key in (
         "coverage_frac",
+        "cp_frac",
+        "post_prefix_coverage_frac",
+        "post_prefix_longest_frac",
+        "post_prefix_n_fragments",
         "longest_frac",
         "n_fragments",
         "intra_dup_frac",
         "intra_n_duplicates",
     ):
         v = s[key]
-        if key in ("n_fragments", "intra_n_duplicates"):
+        if key in ("n_fragments", "intra_n_duplicates", "post_prefix_n_fragments"):
             print(
-                f"{key:<20} {v['mean']:>8.2f} {v['median']:>8.0f} "
+                f"{key:<29} {v['mean']:>8.2f} {v['median']:>8.0f} "
                 f"{v['p90']:>8.0f} {v['max']:>8.0f}"
             )
         else:
             print(
-                f"{key:<20} {v['mean']:>8.2f} {v['median']:>8.2f} "
+                f"{key:<29} {v['mean']:>8.2f} {v['median']:>8.2f} "
                 f"{v['p90']:>8.2f} {v['max']:>8.2f}"
             )
-    mult = s["frac_with_multi_segment"]
+    mult_post = s["frac_with_multi_segment_post_prefix"]
+    any_post = s["frac_with_any_post_prefix"]
     intra = s["frac_with_intra_dup"]
     print()
-    print(f"fraction of requests with ≥2 disjoint cross-session fragments: {mult:.2f}")
+    print(f"fraction of requests with ≥1 post-prefix match:                {any_post:.2f}")
+    print(f"fraction of requests with ≥2 disjoint post-prefix fragments:   {mult_post:.2f}")
     print(f"fraction of requests with ≥1 intra-request duplicate:          {intra:.2f}")
     print()
-    print("coverage_frac      = target tokens inside SOME cross-session matching span")
-    print("longest_frac       = longest single contiguous cross-session match / T")
-    print("intra_dup_frac     = target tokens covered by an intra-request duplicate")
-    print("intra_n_duplicates = # duplicated ≥min_n spans within the same prompt")
+    print("coverage_frac              = target tokens matching SOMETHING earlier (CP + post-prefix)")
+    print("cp_frac                    = target tokens served by a standard prefix cache")
+    print("post_prefix_coverage_frac  = target tokens past CP that recur — only a non-trivial cache serves these")
+    print("post_prefix_longest_frac   = longest single post-prefix match / T")
+    print("post_prefix_n_fragments    = # disjoint post-prefix matches per request")
+    print("longest_frac / n_fragments = total view (CP + post-prefix). Kept for back-compat with prior reports.")
+    print("intra_dup_frac             = target tokens covered by an intra-request duplicate")
 
 
 def main():
@@ -676,6 +912,21 @@ def main():
         "is measurable.",
     )
     p.add_argument(
+        "--agentcap-source",
+        default=None,
+        help="For dataset=agentcap: source URI. Either a local parquet "
+        "file/dir, an HF Dataset folder, or hf://buckets/<owner>/<name>"
+        "[/<prefix>]. Bucket reads stream via fsspec — no download.",
+    )
+    p.add_argument(
+        "--model-filter",
+        default=None,
+        help="For dataset=agentcap: only keep rows whose captured "
+        "request.model equals this. Useful when one bucket prefix mixes "
+        "multiple models (the canonical agentcap layout doesn't, but a "
+        "user-curated prefix might).",
+    )
+    p.add_argument(
         "--output",
         required=True,
         help="Path to write the summary JSON.",
@@ -689,6 +940,8 @@ def main():
         Path(args.output),
         args.max_tokens_per_session,
         repo_filter=args.repo_filter,
+        agentcap_source=args.agentcap_source,
+        model_filter=args.model_filter,
     )
 
 
