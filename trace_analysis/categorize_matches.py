@@ -253,6 +253,36 @@ def find_matches(
     return matches
 
 
+def _tool_call_args_by_id(request: dict) -> Dict[str, str]:
+    """Walk a request body's assistant messages to recover the JSON
+    string passed as ``arguments`` to each tool call, keyed by
+    ``tool_call_id``. Used by the tool_response category drilldown to
+    join a captured ``role=tool`` token range back to the (tool_name,
+    args) pair that produced it."""
+    out: Dict[str, str] = {}
+    for m in request.get("messages") or []:
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            tcid = tc.get("id")
+            fn = tc.get("function") or {}
+            if tcid:
+                args = fn.get("arguments")
+                out[tcid] = args if isinstance(args, str) else json.dumps(args, sort_keys=True)
+    return out
+
+
+def _section_for_token(sections: List[dict], pos: int) -> dict | None:
+    """Return the section whose [tok_range[0], tok_range[1]) covers
+    ``pos``. Sections are stored in token order so a linear scan is
+    fine for the lengths we deal with (≤ a few dozen sections)."""
+    for s in sections:
+        tr = s.get("tok_range") or [0, 0]
+        if tr[0] <= pos < tr[1]:
+            return s
+    return None
+
+
 def split_match_by_role(
     start: int, end: int, token_role: List[str]
 ) -> List[Tuple[int, int, str]]:
@@ -270,6 +300,49 @@ def split_match_by_role(
         out.append((i, j, r))
         i = j
     return out
+
+
+def _build_detail(
+    cat: str,
+    tool_detail_tokens: Dict[Tuple[str, str], int],
+    tool_detail_count: Dict[Tuple[str, str], int],
+    tool_detail_args: Dict[Tuple[str, str], str],
+    tool_detail_snippet: Dict[Tuple[str, str], str],
+    tool_only_tokens: Dict[str, int],
+    tool_only_count: Dict[str, int],
+) -> dict | None:
+    """Per-category drilldown attached as ``by_category[*].detail`` in
+    the output JSON. Today only ``tool_response`` has one — buckets the
+    matched tokens by ``(tool_name, args_hash)`` so a reader can tell
+    whether the recurrence is a few hot tools (cacheable by request
+    semantics) or scattered across many one-offs (admission would need
+    to be content-driven instead). Returns ``None`` for categories
+    without a drilldown."""
+    if cat != "tool_response" or not tool_detail_tokens:
+        return None
+    total = sum(tool_detail_tokens.values())
+    by_tool = [
+        {
+            "tool_name": name,
+            "tokens": toks,
+            "frac_of_tool_response": toks / total,
+            "n_matches": tool_only_count[name],
+        }
+        for name, toks in sorted(tool_only_tokens.items(), key=lambda kv: -kv[1])
+    ]
+    by_tool_args = [
+        {
+            "tool_name": name,
+            "args_hash": ah,
+            "args_sample": tool_detail_args[(name, ah)],
+            "tokens": toks,
+            "frac_of_tool_response": toks / total,
+            "n_matches": tool_detail_count[(name, ah)],
+            "snippet": tool_detail_snippet[(name, ah)],
+        }
+        for (name, ah), toks in sorted(tool_detail_tokens.items(), key=lambda kv: -kv[1])
+    ]
+    return {"by_tool": by_tool, "by_tool_and_args": by_tool_args}
 
 
 def main() -> None:
@@ -327,6 +400,15 @@ def main() -> None:
     cat_lengths: Dict[str, List[int]] = defaultdict(list)
     cat_samples: Dict[str, List[dict]] = defaultdict(list)
 
+    # tool_response drilldown: group recurrence by (tool_name, args_hash)
+    # so we can answer "which (tool, arguments) pairs account for the
+    # bulk of post-prefix tool_response matches". Args are joined via
+    # tool_call_id from the section that owns the matched tokens.
+    tool_detail_tokens: Dict[Tuple[str, str], int] = defaultdict(int)
+    tool_detail_count: Dict[Tuple[str, str], int] = defaultdict(int)
+    tool_detail_args: Dict[Tuple[str, str], str] = {}
+    tool_detail_snippet: Dict[Tuple[str, str], str] = {}
+
     total_matched_tokens = 0
     total_target_tokens = 0
     total_cp_tokens = 0
@@ -346,6 +428,11 @@ def main() -> None:
             continue
         token_role: List[str] = list(row.get("token_role") or [])[: args.max_tokens_per_session]
         total_target_tokens += len(ids)
+
+        # Per-row tool-call args lookup for the tool_response drilldown.
+        row_request = _decode_request(row.get("request"))
+        row_args_by_id = _tool_call_args_by_id(row_request)
+        row_sections = list(row.get("sections") or [])
 
         # CP first — that's what a standard prefix cache would serve.
         cp = max_common_prefix(ids, prior_seqs, prior_sessions, sid)
@@ -400,6 +487,23 @@ def main() -> None:
                         "role": role,
                         "snippet": snippet,
                     })
+                if cat == "tool_response":
+                    sec = _section_for_token(row_sections, sub_s)
+                    if sec is not None and sec.get("role") == "tool":
+                        tool_name = sec.get("tool_name") or "<unknown>"
+                        tcid = sec.get("tool_call_id") or ""
+                        args_str = row_args_by_id.get(tcid, "")
+                        # Hash the args to bucket recurrences. Hash on
+                        # the canonicalized JSON so whitespace-only
+                        # differences don't fragment a real recurrence.
+                        ah = hashlib.sha1(args_str.encode("utf-8")).hexdigest()[:10]
+                        key = (tool_name, ah)
+                        tool_detail_tokens[key] += length
+                        tool_detail_count[key] += 1
+                        if key not in tool_detail_args:
+                            tool_detail_args[key] = args_str[:200]
+                        if key not in tool_detail_snippet:
+                            tool_detail_snippet[key] = snippet
 
         # Add to prior pool.
         add_to_index(index, ids, len(prior_seqs), args.min_match)
@@ -427,6 +531,30 @@ def main() -> None:
         print(f"{cat:<48} {toks:>12,} {toks/max(total_matched_tokens,1):>14.2%} "
               f"{n:>10} {mean_len:>10.0f}")
 
+    # Tool-response drilldown: rank (tool_name, args_hash) buckets by
+    # tokens. Two passes — by tool only, then by (tool, args).
+    tool_only_tokens: Dict[str, int] = defaultdict(int)
+    tool_only_count: Dict[str, int] = defaultdict(int)
+    for (tool_name, _ah), toks in tool_detail_tokens.items():
+        tool_only_tokens[tool_name] += toks
+        tool_only_count[tool_name] += tool_detail_count[(tool_name, _ah)]
+
+    total_tr_tokens = sum(tool_detail_tokens.values()) or 1
+    if tool_detail_tokens:
+        print()
+        print("tool_response drilldown — by tool name:")
+        print(f"  {'tool':<28} {'tokens':>10} {'frac_of_tr':>12} {'n_matches':>10}")
+        for tool_name, toks in sorted(tool_only_tokens.items(), key=lambda kv: -kv[1])[:10]:
+            print(f"  {tool_name:<28} {toks:>10,} {toks/total_tr_tokens:>12.2%} "
+                  f"{tool_only_count[tool_name]:>10}")
+        print()
+        print("tool_response drilldown — top (tool, args_hash) buckets:")
+        print(f"  {'tool':<20} {'args_hash':<12} {'tokens':>10} {'frac':>8} {'n':>5}")
+        ranked = sorted(tool_detail_tokens.items(), key=lambda kv: -kv[1])
+        for (tool_name, ah), toks in ranked[:10]:
+            print(f"  {tool_name:<20} {ah:<12} {toks:>10,} "
+                  f"{toks/total_tr_tokens:>7.2%} {tool_detail_count[(tool_name, ah)]:>5}")
+
     out = {
         "source": args.source,
         "model": model_id,
@@ -448,6 +576,15 @@ def main() -> None:
                 "median_match_length": statistics.median(cat_lengths[cat]),
                 "max_match_length": max(cat_lengths[cat]),
                 "samples": cat_samples[cat],
+                "detail": _build_detail(
+                    cat,
+                    tool_detail_tokens,
+                    tool_detail_count,
+                    tool_detail_args,
+                    tool_detail_snippet,
+                    tool_only_tokens,
+                    tool_only_count,
+                ),
             }
             for cat, toks in cats_sorted
         ],
