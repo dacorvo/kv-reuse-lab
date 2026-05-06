@@ -70,25 +70,41 @@ def classify(role: str, text: str) -> str:
     return "system_other"
 
 
+_WANTED_COLS = (
+    "request_id", "model", "captured_at", "request",
+    "n_tokens", "sections", "token_role", "rendered_tokens",
+)
+
+
+def _select_cols(pf) -> list[str]:
+    have = set(pf.schema_arrow.names)
+    return [c for c in _WANTED_COLS if c in have]
+
+
 def stream_rows(source: str) -> Iterable[dict]:
     import pyarrow.parquet as pq
 
-    cols = [
-        "request_id", "model", "captured_at", "request",
-        "n_tokens", "sections", "token_role", "rendered_tokens",
-    ]
     if source.startswith("hf://"):
         from huggingface_hub import HfFileSystem
 
         fs = HfFileSystem()
-        files = sorted(fs.glob(source.rstrip("/") + "/**/*.parquet"))
-        if not files:
-            files = sorted(fs.glob(source.rstrip("/") + "/*.parquet"))
+        bare = source[len("hf://") :].rstrip("/")
+        try:
+            info = fs.info(bare)
+        except FileNotFoundError:
+            info = None
+        if info and info.get("type") == "file":
+            files = [bare]
+        else:
+            files = sorted(fs.glob(bare + "/**/*.parquet"))
+            if not files:
+                files = sorted(fs.glob(bare + "/*.parquet"))
         if not files:
             raise FileNotFoundError(f"no parquet files under {source!r}")
         for path in files:
             with fs.open(path, "rb") as fh:
                 pf = pq.ParquetFile(fh)
+                cols = _select_cols(pf)
                 for batch in pf.iter_batches(batch_size=16, columns=cols):
                     for row in batch.to_pylist():
                         yield row
@@ -109,13 +125,53 @@ def stream_rows(source: str) -> Iterable[dict]:
         raise FileNotFoundError(f"unrecognised source {source!r}")
     for path in files:
         pf = pq.ParquetFile(str(path))
+        cols = _select_cols(pf)
         for batch in pf.iter_batches(batch_size=16, columns=cols):
             for row in batch.to_pylist():
                 yield row
 
 
+def _decode_request(request) -> dict:
+    """Newer exports store ``request`` as a JSON string. Normalize."""
+    if request is None:
+        return {}
+    if isinstance(request, str):
+        try:
+            return json.loads(request)
+        except json.JSONDecodeError:
+            return {}
+    return request
+
+
+def _render_tokens(row: dict, tok) -> List[int]:
+    """Render token ids on the fly when the row doesn't carry
+    ``rendered_tokens``. Mirrors what the serving engine prefilled at
+    capture time (with ``add_generation_prompt=True``)."""
+    req = _decode_request(row.get("request"))
+    msgs = req.get("messages") or []
+    if not msgs:
+        return []
+    try:
+        out = tok.apply_chat_template(
+            msgs,
+            tools=req.get("tools"),
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+        )
+    except Exception:
+        return []
+    ids = out["input_ids"]
+    if hasattr(ids, "tolist"):
+        ids = ids.tolist()
+    if ids and isinstance(ids[0], list):
+        ids = ids[0]
+    return list(ids)
+
+
 def session_id_for(row: dict) -> str | None:
-    msgs = (row.get("request") or {}).get("messages") or []
+    req = _decode_request(row.get("request"))
+    msgs = req.get("messages") or []
     first_user = next(
         (m.get("content") for m in msgs if m.get("role") == "user"), None
     )
@@ -280,7 +336,14 @@ def main() -> None:
     CP_CATEGORY = "common_prefix_served_by_prefix_cache"
 
     for r_idx, (sid, row) in enumerate(ordered):
-        ids: List[int] = list(row["rendered_tokens"])[: args.max_tokens_per_session]
+        rendered = row.get("rendered_tokens")
+        if rendered:
+            ids = list(rendered)
+        else:
+            ids = _render_tokens(row, tok)
+        ids = ids[: args.max_tokens_per_session]
+        if not ids:
+            continue
         token_role: List[str] = list(row.get("token_role") or [])[: args.max_tokens_per_session]
         total_target_tokens += len(ids)
 

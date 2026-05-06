@@ -254,6 +254,23 @@ def _claude_hyperswitch_sessions(
         yielded += 1
 
 
+_AGENTCAP_REQUIRED_COLS = ("request_id", "model", "captured_at", "request", "n_tokens")
+_AGENTCAP_OPTIONAL_COLS = ("rendered_tokens",)
+
+
+def _select_agentcap_cols(pf) -> list[str]:
+    """Return the intersection of the parquet's actual columns with the
+    set this analyzer cares about. Older exports carry
+    ``rendered_tokens`` baked in; newer exports drop it and let the
+    analyzer recompute on the fly. ``request`` may be either a struct
+    (legacy) or a JSON string (post-streaming-export refactor).
+    """
+    have = set(pf.schema_arrow.names)
+    cols = [c for c in _AGENTCAP_REQUIRED_COLS if c in have]
+    cols += [c for c in _AGENTCAP_OPTIONAL_COLS if c in have]
+    return cols
+
+
 def _stream_agentcap_rows(source: str):
     """Iterate dict rows from one of:
       - ``hf://buckets/<owner>/<name>[/<prefix>]``  (streamed via HfFileSystem)
@@ -265,20 +282,29 @@ def _stream_agentcap_rows(source: str):
     """
     import pyarrow.parquet as pq
 
-    cols = ["request_id", "model", "captured_at", "request", "n_tokens", "rendered_tokens"]
-
     if source.startswith("hf://"):
         from huggingface_hub import HfFileSystem
 
         fs = HfFileSystem()
-        files = sorted(fs.glob(source.rstrip("/") + "/**/*.parquet"))
-        if not files:
-            files = sorted(fs.glob(source.rstrip("/") + "/*.parquet"))
+        # ``source`` may point at a single .parquet file, a directory, or
+        # a bucket prefix. fs.info() resolves which.
+        bare = source[len("hf://") :].rstrip("/")
+        try:
+            info = fs.info(bare)
+        except FileNotFoundError:
+            info = None
+        if info and info.get("type") == "file":
+            files = [bare]
+        else:
+            files = sorted(fs.glob(bare + "/**/*.parquet"))
+            if not files:
+                files = sorted(fs.glob(bare + "/*.parquet"))
         if not files:
             raise FileNotFoundError(f"no parquet files under {source!r}")
         for path in files:
             with fs.open(path, "rb") as fh:
                 pf = pq.ParquetFile(fh)
+                cols = _select_agentcap_cols(pf)
                 for batch in pf.iter_batches(batch_size=32, columns=cols):
                     for row in batch.to_pylist():
                         yield row
@@ -302,9 +328,64 @@ def _stream_agentcap_rows(source: str):
         raise FileNotFoundError(f"agentcap source not recognised: {source!r}")
     for path in files:
         pf = pq.ParquetFile(str(path))
+        cols = _select_agentcap_cols(pf)
         for batch in pf.iter_batches(batch_size=32, columns=cols):
             for row in batch.to_pylist():
                 yield row
+
+
+def _decode_request(request) -> dict:
+    """Newer exports serialize ``request`` as a JSON string (works
+    around polymorphic tool schemas blowing up Arrow schema inference).
+    Older ones leave it as a struct/dict. Normalize to dict."""
+    if request is None:
+        return {}
+    if isinstance(request, str):
+        try:
+            return json.loads(request)
+        except json.JSONDecodeError:
+            return {}
+    return request
+
+
+def _render_tokens_for_row(row: dict, _tok_cache: dict) -> List[int]:
+    """Render token ids for a row that lacks ``rendered_tokens``. Uses
+    the row's own ``model`` to load (and memoize) the right tokenizer,
+    then applies its chat template to ``request.messages`` (with tools
+    if present), with ``add_generation_prompt=True`` to match what the
+    serving engine would actually prefill at request time.
+
+    Returns ``[]`` if rendering fails (silent skip — the caller treats
+    short/empty token lists as no-op rows)."""
+    from transformers import AutoTokenizer
+
+    model = row.get("model")
+    if not model:
+        return []
+    tok = _tok_cache.get(model)
+    if tok is None:
+        tok = AutoTokenizer.from_pretrained(model)
+        _tok_cache[model] = tok
+    req = _decode_request(row.get("request"))
+    msgs = req.get("messages") or []
+    if not msgs:
+        return []
+    try:
+        out = tok.apply_chat_template(
+            msgs,
+            tools=req.get("tools"),
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+        )
+    except Exception:
+        return []
+    ids = out["input_ids"]
+    if hasattr(ids, "tolist"):
+        ids = ids.tolist()
+    if ids and isinstance(ids[0], list):
+        ids = ids[0]
+    return list(ids)
 
 
 def _agentcap_sessions(
@@ -334,11 +415,14 @@ def _agentcap_sessions(
     grouped: Dict[str, List[Tuple[int, int, List[int]]]] = {}
     skipped_no_user = 0
     skipped_model = 0
+    skipped_no_tokens = 0
+    tok_cache: dict = {}
     for row in _stream_agentcap_rows(source):
         if model_filter and row.get("model") != model_filter:
             skipped_model += 1
             continue
-        msgs = (row.get("request") or {}).get("messages") or []
+        req = _decode_request(row.get("request"))
+        msgs = req.get("messages") or []
         first_user = next(
             (m.get("content") for m in msgs if m.get("role") == "user"),
             None,
@@ -346,12 +430,20 @@ def _agentcap_sessions(
         if not first_user:
             skipped_no_user += 1
             continue
+        rendered = row.get("rendered_tokens")
+        if rendered:
+            ids = list(rendered)
+        else:
+            ids = _render_tokens_for_row(row, tok_cache)
+        if not ids:
+            skipped_no_tokens += 1
+            continue
         sid = hashlib.sha1(str(first_user).encode("utf-8")).hexdigest()[:12]
         grouped.setdefault(sid, []).append(
             (
                 int(row.get("captured_at", 0)),
-                int(row.get("n_tokens", 0)),
-                list(row["rendered_tokens"]),
+                int(row.get("n_tokens", 0) or len(ids)),
+                ids,
             )
         )
 
@@ -359,7 +451,8 @@ def _agentcap_sessions(
         raise SystemExit(
             f"no agentcap rows yielded from {source!r} "
             f"(skipped: {skipped_no_user} without a user message, "
-            f"{skipped_model} not matching --model-filter)"
+            f"{skipped_model} not matching --model-filter, "
+            f"{skipped_no_tokens} that failed to tokenize)"
         )
 
     # Stable session order: by earliest captured_at within each group.

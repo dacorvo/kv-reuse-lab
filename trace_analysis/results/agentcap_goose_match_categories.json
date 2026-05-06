@@ -1,0 +1,289 @@
+{
+  "source": "hf://buckets/dacorvo/agentcap-traces/transformers-coding-session/goose.parquet",
+  "model": "unsloth/Qwen3.6-35B-A3B",
+  "min_match": 128,
+  "n_sessions": 101,
+  "n_requests": 785,
+  "n_requests_with_post_prefix_match": 585,
+  "total_target_tokens": 11027303,
+  "total_matched_tokens": 6462169,
+  "total_cp_tokens": 3731271,
+  "total_post_prefix_tokens": 2730898,
+  "by_category": [
+    {
+      "category": "common_prefix_served_by_prefix_cache",
+      "tokens": 3731271,
+      "frac_of_matched": 0.5774022623054271,
+      "n_matches": 755,
+      "mean_match_length": 4942.080794701987,
+      "median_match_length": 5002,
+      "max_match_length": 5095,
+      "samples": [
+        {
+          "request_id": "ce54816eca8b453881a328ab0cb80b03",
+          "session_id": "ddc5491e875b",
+          "tok_range": [
+            0,
+            5000
+          ],
+          "tokens": 5000,
+          "role": "system",
+          "snippet": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"analyze\", \"description\": \"Analyze code structure in 3 modes: 1) Directory overview - file tree with LOC/function/class counts to max_depth. 2) File details - functions, classes, imports. 3) Symbol"
+        },
+        {
+          "request_id": "507851bf723d4cd38ee325c8941a581c",
+          "session_id": "ddc5491e875b",
+          "tok_range": [
+            0,
+            5000
+          ],
+          "tokens": 5000,
+          "role": "system",
+          "snippet": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"analyze\", \"description\": \"Analyze code structure in 3 modes: 1) Directory overview - file tree with LOC/function/class counts to max_depth. 2) File details - functions, classes, imports. 3) Symbol"
+        },
+        {
+          "request_id": "3acac546edfd4e6db149057a4605832d",
+          "session_id": "ddc5491e875b",
+          "tok_range": [
+            0,
+            5000
+          ],
+          "tokens": 5000,
+          "role": "system",
+          "snippet": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"analyze\", \"description\": \"Analyze code structure in 3 modes: 1) Directory overview - file tree with LOC/function/class counts to max_depth. 2) File details - functions, classes, imports. 3) Symbol"
+        },
+        {
+          "request_id": "32e7aed15f804e6dbd2529486590a58f",
+          "session_id": "ddc5491e875b",
+          "tok_range": [
+            0,
+            5000
+          ],
+          "tokens": 5000,
+          "role": "system",
+          "snippet": "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"analyze\", \"description\": \"Analyze code structure in 3 modes: 1) Directory overview - file tree with LOC/function/class counts to max_depth. 2) File details - functions, classes, imports. 3) Symbol"
+        }
+      ]
+    },
+    {
+      "category": "tool_response",
+      "tokens": 2612132,
+      "frac_of_matched": 0.40421907876442104,
+      "n_matches": 1990,
+      "mean_match_length": 1312.6291457286432,
+      "median_match_length": 141.0,
+      "max_match_length": 14041,
+      "samples": [
+        {
+          "request_id": "08bda2799d414a7ba83ae073ff73de56",
+          "session_id": "fde2bd18c53d",
+          "tok_range": [
+            7321,
+            7460
+          ],
+          "tokens": 139,
+          "role": "tool",
+          "snippet": " The HuggingFace Team. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable"
+        },
+        {
+          "request_id": "06f6ac5ae20b4fdeb5e7b6ca8700087c",
+          "session_id": "fde2bd18c53d",
+          "tok_range": [
+            7321,
+            7460
+          ],
+          "tokens": 139,
+          "role": "tool",
+          "snippet": " The HuggingFace Team. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable"
+        },
+        {
+          "request_id": "06f6ac5ae20b4fdeb5e7b6ca8700087c",
+          "session_id": "fde2bd18c53d",
+          "tok_range": [
+            8562,
+            8701
+          ],
+          "tokens": 139,
+          "role": "tool",
+          "snippet": " The HuggingFace Team. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable"
+        },
+        {
+          "request_id": "0509cea6a44c4c998f2dcecd3b90b044",
+          "session_id": "fde2bd18c53d",
+          "tok_range": [
+            7321,
+            7460
+          ],
+          "tokens": 139,
+          "role": "tool",
+          "snippet": " The HuggingFace Team. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable"
+        }
+      ]
+    },
+    {
+      "category": "assistant_output_should_not_be_cached",
+      "tokens": 85839,
+      "frac_of_matched": 0.01328331091310054,
+      "n_matches": 1231,
+      "mean_match_length": 69.73111291632819,
+      "median_match_length": 22,
+      "max_match_length": 2039,
+      "samples": [
+        {
+          "request_id": "fe995fd408a7421eb798384e90d0fb5d",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            5028,
+            6731
+          ],
+          "tokens": 1703,
+          "role": "assistant",
+          "snippet": "<|im_start|>assistant\nGreat question \u2014 this is a classic performance regression scenario. Let me walk you through a systematic bisecting strategy for the `generate()` throughput regression in the Hugging Face Transformers repo.\n\n## Bisecting a Performance Regression in Transformers\n\n### Step 1: Identify the Approximate Window\n\nFirst, narrow down when the regression started:\n\n```bash\n# Check your current commit"
+        },
+        {
+          "request_id": "fe995fd408a7421eb798384e90d0fb5d",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            6765,
+            6769
+          ],
+          "tokens": 4,
+          "role": "assistant",
+          "snippet": "<|im_start|>assistant\n<think>"
+        },
+        {
+          "request_id": "ba398b2d931d4587b86ad9ab098dab0d",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            5028,
+            6731
+          ],
+          "tokens": 1703,
+          "role": "assistant",
+          "snippet": "<|im_start|>assistant\nGreat question \u2014 this is a classic performance regression scenario. Let me walk you through a systematic bisecting strategy for the `generate()` throughput regression in the Hugging Face Transformers repo.\n\n## Bisecting a Performance Regression in Transformers\n\n### Step 1: Identify the Approximate Window\n\nFirst, narrow down when the regression started:\n\n```bash\n# Check your current commit"
+        },
+        {
+          "request_id": "ba398b2d931d4587b86ad9ab098dab0d",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            6765,
+            6769
+          ],
+          "tokens": 4,
+          "role": "assistant",
+          "snippet": "<|im_start|>assistant\n<think>"
+        }
+      ]
+    },
+    {
+      "category": "user_content",
+      "tokens": 27545,
+      "frac_of_matched": 0.004262500717638304,
+      "n_matches": 131,
+      "mean_match_length": 210.26717557251908,
+      "median_match_length": 34,
+      "max_match_length": 11194,
+      "samples": [
+        {
+          "request_id": "fe995fd408a7421eb798384e90d0fb5d",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            5026,
+            5028
+          ],
+          "tokens": 2,
+          "role": "user",
+          "snippet": "<|im_end|>\n"
+        },
+        {
+          "request_id": "fe995fd408a7421eb798384e90d0fb5d",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            6731,
+            6765
+          ],
+          "tokens": 34,
+          "role": "user",
+          "snippet": " me the diff for the recent refactor in `generation/utils.py` to check for common culprits like unnecessary `synchronize` calls or cache handling changes.<|im_end|>\n"
+        },
+        {
+          "request_id": "ba398b2d931d4587b86ad9ab098dab0d",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            5026,
+            5028
+          ],
+          "tokens": 2,
+          "role": "user",
+          "snippet": "<|im_end|>\n"
+        },
+        {
+          "request_id": "ba398b2d931d4587b86ad9ab098dab0d",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            6731,
+            6765
+          ],
+          "tokens": 34,
+          "role": "user",
+          "snippet": " me the diff for the recent refactor in `generation/utils.py` to check for common culprits like unnecessary `synchronize` calls or cache handling changes.<|im_end|>\n"
+        }
+      ]
+    },
+    {
+      "category": "system_other",
+      "tokens": 5382,
+      "frac_of_matched": 0.0008328472994129371,
+      "n_matches": 16,
+      "mean_match_length": 336.375,
+      "median_match_length": 5.0,
+      "max_match_length": 1860,
+      "samples": [
+        {
+          "request_id": "2a84a588007041d4b8de54a7e9c80c27",
+          "session_id": "f989120e154b",
+          "tok_range": [
+            10301,
+            10306
+          ],
+          "tokens": 5,
+          "role": "unknown",
+          "snippet": "<|im_start|>assistant\n<think>\n"
+        },
+        {
+          "request_id": "f704e5e635c14edebabf62944929cf07",
+          "session_id": "967b7ac7a834",
+          "tok_range": [
+            5523,
+            5528
+          ],
+          "tokens": 5,
+          "role": "unknown",
+          "snippet": "<|im_start|>assistant\n<think>\n"
+        },
+        {
+          "request_id": "6b2ea8c8c1b64f609d2f8421a7c48e7a",
+          "session_id": "ed1d6c3fed65",
+          "tok_range": [
+            16361,
+            16366
+          ],
+          "tokens": 5,
+          "role": "unknown",
+          "snippet": "<|im_start|>assistant\n<think>\n"
+        },
+        {
+          "request_id": "a9d847d157044c87ab691517748ca8b6",
+          "session_id": "4ae54793ad78",
+          "tok_range": [
+            10258,
+            10263
+          ],
+          "tokens": 5,
+          "role": "unknown",
+          "snippet": "<|im_start|>assistant\n<think>\n"
+        }
+      ]
+    }
+  ]
+}
