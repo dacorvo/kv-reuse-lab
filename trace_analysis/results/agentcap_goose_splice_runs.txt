@@ -1,0 +1,33 @@
+[manifest] 5 pair(s) selected (top by chunk size)
+[server] starting: /home/ubuntu/llama.cpp/build/bin/llama-server --model /home/ubuntu/llama.cpp/models/llama-3.2-1b/Llama-3.2-1B-Instruct-Q4_K_M.gguf --port 53151 --host 127.0.0.1 --parallel 1 --ctx-size 65536 --cache-reuse 128 --kv-unified --jinja --no-warmup --no-cache-idle-slots --n-gpu-layers 999 -v
+[server] ready
+[pair 0] bucket=tree:7dc40e8c8a chunk_n_tokens=14041 drift=+809
+    cache_n=0 prompt_n=39106 prompt_ms=3592
+    cache_n=38942 prompt_n=8654 prompt_ms=1443
+  [splice] scheduled=[21037, 12548]
+  [splice] applied: size=21037 shift=+803
+  [splice] applied: size=12548 shift=+803
+[pair 1] bucket=tree:7dc40e8c8a chunk_n_tokens=14041 drift=+809
+    cache_n=39105 prompt_n=1 prompt_ms=13
+    cache_n=47447 prompt_n=204 prompt_ms=76
+  [splice] scheduled=[]
+[pair 2] bucket=tree:7dc40e8c8a chunk_n_tokens=14025 drift=+833
+    cache_n=39105 prompt_n=1 prompt_ms=13
+    cache_n=38936 prompt_n=973 prompt_ms=250
+  [splice] scheduled=[21036, 12544]
+  [splice] applied: size=21036 shift=+860
+  [splice] applied: size=12543 shift=+860
+[pair 3] bucket=tree:7dc40e8c8a chunk_n_tokens=14025 drift=+833
+    cache_n=39105 prompt_n=1 prompt_ms=13
+    cache_n=39909 prompt_n=149 prompt_ms=40
+  [splice] scheduled=[]
+[pair 4] bucket=tree:7dc40e8c8a chunk_n_tokens=14025 drift=+833
+    cache_n=39105 prompt_n=1 prompt_ms=13
+    cache_n=40058 prompt_n=568 prompt_ms=112
+  [splice] scheduled=[]
+=== summary ===
+pair 0: bucket=tree:7dc40e8c8a        expected_chunk= 14041 scheduled= 33585 applied= 33585 cache_n= 38942
+pair 1: bucket=tree:7dc40e8c8a        expected_chunk= 14041 scheduled=     0 applied=     0 cache_n= 47447
+pair 2: bucket=tree:7dc40e8c8a        expected_chunk= 14025 scheduled= 33580 applied= 33579 cache_n= 38936
+pair 3: bucket=tree:7dc40e8c8a        expected_chunk= 14025 scheduled=     0 applied=     0 cache_n= 39909
+pair 4: bucket=tree:7dc40e8c8a        expected_chunk= 14025 scheduled=     0 applied=     0 cache_n= 40058
