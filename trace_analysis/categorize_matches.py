@@ -222,8 +222,13 @@ def find_matches(
     min_n: int,
     exclude_session: str,
     skip_to: int = 0,
-) -> List[Tuple[int, int]]:
-    matches: List[Tuple[int, int]] = []
+) -> List[Tuple[int, int, int, int]]:
+    """Return (b_start, b_end, donor_seq_idx, donor_start) for every
+    non-overlapping ≥``min_n``-token match. ``donor_seq_idx`` indexes
+    into ``prior_seqs``; together with the donor's request_id (kept
+    parallel by the caller), this is what the splice manifest needs to
+    identify both ends of the candidate splice pair."""
+    matches: List[Tuple[int, int, int, int]] = []
     i = max(0, skip_to)
     T = len(target)
     while i + min_n <= T:
@@ -233,6 +238,8 @@ def find_matches(
             i += 1
             continue
         best_len = 0
+        best_si = -1
+        best_p = -1
         for si, p in cands:
             if prior_sessions[si] == exclude_session:
                 continue
@@ -245,10 +252,12 @@ def find_matches(
                 ext += 1
             if ext > best_len:
                 best_len = ext
+                best_si = si
+                best_p = p
         if best_len < min_n:
             i += 1
             continue
-        matches.append((i, i + best_len))
+        matches.append((i, i + best_len, best_si, best_p))
         i += best_len
     return matches
 
@@ -299,6 +308,36 @@ def split_match_by_role(
             j += 1
         out.append((i, j, r))
         i = j
+    return out
+
+
+def _sample_splice_candidates(
+    candidates: List[dict],
+    *,
+    top_buckets: int,
+    per_bucket: int,
+) -> List[dict]:
+    """Cap manifest size by sampling. The splice-correctness measurement
+    is one model forward per pair, so unbounded emission would be
+    intractable on a 35B model. Strategy:
+      1. Rank buckets by total recurrence-token volume.
+      2. Keep the top ``top_buckets`` of them.
+      3. For each kept bucket, keep the largest ``per_bucket`` candidate
+         pairs (longest chunks first — bigger chunks are where splice
+         savings would matter most).
+
+    The full unsampled list stays in the JSON report's detail block, so
+    nothing is lost — only the JSONL manifest is sampled."""
+    by_bucket: Dict[str, List[dict]] = defaultdict(list)
+    bucket_volume: Dict[str, int] = defaultdict(int)
+    for c in candidates:
+        by_bucket[c["bucket_id"]].append(c)
+        bucket_volume[c["bucket_id"]] += c["chunk_n_tokens"]
+    ranked_buckets = sorted(bucket_volume.items(), key=lambda kv: -kv[1])
+    out: List[dict] = []
+    for bid, _ in ranked_buckets[:top_buckets]:
+        cands = sorted(by_bucket[bid], key=lambda c: -c["chunk_n_tokens"])
+        out.extend(cands[:per_bucket])
     return out
 
 
@@ -354,6 +393,12 @@ def main() -> None:
                     help="Cap each request's token sequence to bound index memory.")
     ap.add_argument("--n-samples-per-category", type=int, default=4,
                     help="How many decoded snippets to keep per category.")
+    ap.add_argument("--splice-top-buckets", type=int, default=20,
+                    help="Splice manifest: keep this many top (tool, args) "
+                    "buckets ranked by recurrence volume.")
+    ap.add_argument("--splice-per-bucket", type=int, default=5,
+                    help="Splice manifest: keep this many largest-chunk "
+                    "candidates per kept bucket.")
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
 
@@ -393,6 +438,7 @@ def main() -> None:
     # Incremental cross-session matching, same as analyze_trace_reuse.
     prior_seqs: List[List[int]] = []
     prior_sessions: List[str] = []
+    prior_request_ids: List[str] = []  # parallel — donor lookup for splice manifest
     index: Dict[int, List[Tuple[int, int]]] = {}
 
     cat_tokens: Dict[str, int] = defaultdict(int)
@@ -408,6 +454,11 @@ def main() -> None:
     tool_detail_count: Dict[Tuple[str, str], int] = defaultdict(int)
     tool_detail_args: Dict[Tuple[str, str], str] = {}
     tool_detail_snippet: Dict[Tuple[str, str], str] = {}
+
+    # Splice candidate manifest: one entry per (donor, recipient,
+    # token-range) pair where a tool_response chunk recurs. Consumed by
+    # the splice-correctness phase (cache shift compatibility test).
+    splice_candidates: List[dict] = []
 
     total_matched_tokens = 0
     total_target_tokens = 0
@@ -461,9 +512,13 @@ def main() -> None:
         )
         if spans:
             n_requests_with_post_prefix += 1
-        post_prefix_in_request = sum(e - s for s, e in spans)
+        post_prefix_in_request = sum(e - s for s, e, _, _ in spans)
         total_post_prefix_tokens += post_prefix_in_request
-        for s, e in spans:
+        for s, e, donor_si, donor_p in spans:
+            donor_len = e - s
+            donor_request_id = (
+                prior_request_ids[donor_si] if 0 <= donor_si < len(prior_request_ids) else ""
+            )
             for sub_s, sub_e, role in split_match_by_role(s, e, token_role):
                 # Decode a leading snippet of the sub-match (cap for sample storage).
                 snippet_ids = ids[sub_s : min(sub_e, sub_s + 80)]
@@ -504,11 +559,35 @@ def main() -> None:
                             tool_detail_args[key] = args_str[:200]
                         if key not in tool_detail_snippet:
                             tool_detail_snippet[key] = snippet
+                        # Record one splice-candidate per sub-match.
+                        # Donor offset within its sub-range tracks where
+                        # in the donor's prompt the equivalent bytes lie.
+                        donor_sub_start = donor_p + (sub_s - s)
+                        donor_sub_end = donor_sub_start + length
+                        splice_candidates.append({
+                            "bucket_id": f"{tool_name}:{ah}",
+                            "tool_name": tool_name,
+                            "args_hash": ah,
+                            "args_sample": args_str[:200],
+                            "model": model_id,
+                            "source_parquet": args.source,
+                            "donor": {
+                                "request_id": donor_request_id,
+                                "tok_range": [donor_sub_start, donor_sub_end],
+                            },
+                            "recipient": {
+                                "request_id": row["request_id"],
+                                "tok_range": [sub_s, sub_e],
+                            },
+                            "chunk_n_tokens": length,
+                            "position_drift": sub_s - donor_sub_start,
+                        })
 
         # Add to prior pool.
         add_to_index(index, ids, len(prior_seqs), args.min_match)
         prior_seqs.append(ids)
         prior_sessions.append(sid)
+        prior_request_ids.append(row["request_id"])
 
     # Build report.
     cats_sorted = sorted(cat_tokens.items(), key=lambda kv: -kv[1])
@@ -592,6 +671,26 @@ def main() -> None:
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_text(json.dumps(out, indent=2))
     print(f"\n[info] wrote {args.output}")
+
+    # Splice-candidate manifest: pair-per-line JSONL alongside the JSON
+    # report. Sampled to keep the splice-correctness phase tractable —
+    # top buckets (most-recurring (tool, args) pairs) get K candidates
+    # each. Pair selection is "nearest-prior-donor" so a recipient is
+    # always paired with the most-recently-seen donor for its bucket.
+    if splice_candidates:
+        manifest_path = Path(args.output).with_suffix(".splice_candidates.jsonl")
+        sampled = _sample_splice_candidates(
+            splice_candidates,
+            top_buckets=args.splice_top_buckets,
+            per_bucket=args.splice_per_bucket,
+        )
+        with manifest_path.open("w") as fh:
+            for c in sampled:
+                fh.write(json.dumps(c) + "\n")
+        print(
+            f"[info] wrote splice manifest: {len(sampled)} pairs across "
+            f"{len({c['bucket_id'] for c in sampled})} buckets → {manifest_path}"
+        )
 
 
 if __name__ == "__main__":
