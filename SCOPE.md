@@ -9,7 +9,7 @@ project context and the **CP** / **post-prefix matches** terminology.
 |---|---|
 | `../agentcap` | Capture LLM-agent chat-completion traffic via a transparent OpenAI-compat proxy; export as HF datasets. |
 | **`reagent`** (this repo) | Measure cross-request KV-cache-reuse correctness (splice-with-shift); analyse recurrence in captured traces; design the runtime cache. |
-| `dacorvo/llama.cpp` branch `feat/cache-reuse-symmetric` | Research instrument used to test whether the splice mechanism is *applicable* to specific architectures. Two patches: symmetric `--cache-reuse` (multi-segment splice) + K-shift for text-only IM-RoPE / M-RoPE. Whether it ships upstream is a downstream concern. |
+| `dacorvo/llama.cpp` branch `feat/cache-reuse-symmetric` | Research instrument used to test whether the splice mechanism is *applicable* to specific architectures. Two patches: symmetric `--cache-reuse` (multi-segment splice) + K-shift for text-only IM-RoPE / M-RoPE. Whether it ships upstream is a downstream concern. SWA models (Gemma-4 family) require `--swa-full` at server launch to bypass the iswa size-mismatch shift gate. |
 | ~~`hf-mount-cache-examples`~~ | Deprecated research log. |
 
 ## What we know
@@ -20,24 +20,51 @@ The mechanism works on clean structural-edge chunks of size ≥ 128 at
 sim ≥ 0.95 / top-1 agreement, validated on six attention models
 (Gemma-4 sizes, Llama-3.2-1B, Llama-3.1-8B). Within that envelope,
 spliced output is essentially indistinguishable from cold prefill at
-the next-token-distribution level. The result is **suggestive, not
-airtight**: small N per cell, catastrophic outliers exist, and the
-fixes in `02bad94` (input-only role filter) and `a3ce1dc` (skip
-first-turn matches) postdate most of the published numbers, so any
-pre-fix figure is indicative not established.
+the next-token-distribution level. End-to-end through patched
+llama-server reproduces the bound on Gemma-4-E4B-it (80 pairs,
+mean sim 0.92, mean KL 0.23, agree 82.5%, **zero catastrophic
+outliers**).
 
-What the published result does **not** bound:
+What the result does **not** bound:
 
 - Interior-span chunks (mid-message, no structural edge).
-- Multi-segment composition — two or three disjoint cached chunks
-  in one prompt with re-prefilled gaps.
 - Accumulated reuse across multiple turns of one session.
 - Hybrid-architecture splicing (see "Findings — llama.cpp side").
+
+Multi-segment composition is empirically clean on the patched
+llama-server — symmetric search handles up to 9-segment splices with
+mixed-direction shifts (±30k positions) without producing structurally
+broken output.
 
 llama.cpp `--cache-reuse` does the same RoPE rephasing the splice
 harness does, so the mechanism is not the differentiator with
 production stacks. The naive (un-rephased) baseline is reagent-internal
 only — no production stack ships it.
+
+### Soft donor-context bleed (Gemma-4 finding)
+
+On the Gemma-4 sweep the bottom-quintile pairs by sim (0.65–0.75)
+share a pattern: spliced model produces a response that "remembers"
+turns from the donor's session that don't exist in the recipient's.
+Spliced K/V cells encode attention to donor's pre-chunk context;
+when transplanted into a recipient with a *shorter* pre-chunk history
+than the donor's, those K/V values inject context recipient's flow
+doesn't have.
+
+Empirical signal: splice quality (sim) scales monotonically with
+`recipient_turns − donor_turns`:
+
+```
+delta = -3   N=3   mean_sim 0.808
+delta =  0   N=9   mean_sim 0.896
+delta = +2   N=13  mean_sim 0.971
+delta = +4   N=4   mean_sim 0.967
+```
+
+Pre-splice admission heuristic candidate: prefer donors whose turn
+position is ≤ recipient's. Single-agent / single-model / 30-task
+observation — needs cross-agent + cross-model + larger-corpus
+validation before being treated as a load-bearing rule.
 
 ### Admission, not lookup, is the hard problem
 
@@ -90,7 +117,7 @@ runtime cache earns its keep.
 ### Findings — llama.cpp side
 
 The fork branch was used as a research instrument to test mechanism
-applicability. Two findings:
+applicability. Three architecture classes:
 
 - **Multi-axis-RoPE attention models** (Qwen3 VL family, Qwen3
   non-3.5): mechanism applies. The `(t,t,t,0) + (δ,δ,δ,0) ≡
@@ -98,88 +125,98 @@ applicability. Two findings:
   (mechanical test at fp32 `rel_err ~ 0`); the symmetric search +
   K-shift end-to-end pipeline runs; output divergence is governed by
   the same attention-side dynamics reagent measures.
+- **SWA attention models** (Gemma-4 family): mechanism applies, but
+  llama.cpp's iswa cache layout sizes the SWA buffer smaller than the
+  base buffer by default. The shift gate at
+  `llama-kv-cache-iswa.cpp:223` requires equal-sized base/SWA caches.
+  Pass `--swa-full` at server launch to equalize them; then K-shift
+  forwards through both buffers correctly. Cost: the SWA memory
+  saving is given back. Verified end-to-end on Gemma-4-E4B-it (80
+  pairs, zero catastrophic outliers).
 - **Hybrid attention+recurrent models** (Qwen3.5/3.6): mechanism does
-  *not* apply. These have a recurrent state alongside the attention
-  KV — a per-layer rolling aggregate of all prior tokens that's not
+  *not* apply. The recurrent gated-delta-net layer state is a
+  per-layer rolling aggregate of all prior tokens, not
   position-addressable. Splicing into a hybrid model leaves the
   recurrent state stale (it carries the donor's prefix; the recipient
-  needs its own). Reagent's published splice-correctness work
-  measured attention-only and does **not** bound this — the
-  recurrent dependency has no spatial decay and no recovery
-  mechanism.
+  needs its own). Empirically: 9% (8/88) of Qwen3.6-35B-A3B goose
+  pairs collapse the spliced first-token onto two specific tokens —
+  `</` (token 510, orphan close-tag fragment) or `<|im_end|>` (token
+  248046, premature end-of-turn) — producing syntactically valid but
+  semantically broken output. Recurrent state corruption signature.
+  Not fixable at the K-shift layer.
 
 Net: the symmetric+IMROPE patch is mechanically correct and ready for
-non-hybrid IMROPE/MROPE attention models. For hybrid Qwen3.5/3.6 it
+non-hybrid attention models (full or SWA). For hybrid Qwen3.5/3.6 it
 lights up the code path but produces semantically degraded output —
 a separate problem not solvable at the K-shift layer.
 
 ## Next steps (priority order)
 
-### 1. Recapture corpora on a non-hybrid model
+### 1. Disk-backed long-running cache + benchmark A/B
 
-Existing agentcap captures are all on Qwen3.6-35B-A3B (hybrid). For
-end-to-end splice-correctness measurements to be meaningful we need
-captures from a non-hybrid model running the same agents.
-Substrate composition is a workload property, not a model property,
-so it should reproduce. Candidates:
+The splice mechanism is empirically correct on attention-only
+architectures (Gemma-4 sweep above). The next thing worth measuring
+is whether a long-running cache *across* many real coding tasks
+delivers wall-clock and tokens-prefilled wins without breaking
+correctness. Setup:
 
-- **Gemma-4-26B-A4B-it** — non-hybrid, partial captures already
-  exist.
-- **Llama-3.3-70B-Instruct** — non-hybrid + high compliance with
-  Hermes-style skill loading (would surface the skills-substrate
-  Gemma-4 didn't).
-- **Qwen3-32B-Instruct** (non-3.5) — closest dialect-cousin to
-  Qwen3.6 without the hybrid memory.
+- Build a disk-backed cache layer behind patched llama-server that
+  persists chunks across requests, keyed by
+  `tool_response:tool_name+args_hash`.
+- Run a single-repo agent task suite end-to-end. **SWE-bench Verified
+  filtered to django/django (231 tasks)** is the cleanest existing
+  fit: same repo across hundreds of tasks ⇒ recurring `tree`,
+  `read_file`, `grep` calls populate the cache and hit each other.
+- A/B: same agent, same tasks, two servers — vanilla vs
+  cache-enabled. Compare task pass rate (correctness gate),
+  wall-clock, total tokens prefilled, GPU-seconds.
 
-Deliverable: fresh `categorize_matches.py` outputs across goose,
-opencode, pi, hermes on at least one of these.
+Pass-rate equality (within noise) is the correctness gate; the rest
+are the value-add metrics.
 
-### 2. Splice-correctness measurements past the published bound
+### 2. Cross-agent / cross-model validation of admission heuristics
 
-Three categories the published result does not cover, listed in
-priority of relevance to the runtime cache:
+The Gemma-4 turn-delta finding (splice quality scales with
+`recipient_turns − donor_turns`) was observed on goose × Gemma-4 only.
+Before treating it as a load-bearing admission rule, validate on:
 
-- **Multi-segment composition** — does per-chunk error add, multiply,
-  or saturate when 2-3 chunks are spliced into one prompt? The
-  symmetric-cache-reuse patch can drive this experiment on real
-  traces; `measure_multi_splice_b.py` can also.
+- Different agents: opencode, aider, hermes (different prompt /
+  tool-call structures).
+- Different non-hybrid attention models: Llama-3.3-70B-Instruct,
+  Qwen3-32B (non-3.5).
+- Larger task pools.
+
+### 3. Splice-correctness measurements past the published bound
+
+Defer to item 1's corpus. The categories not yet covered:
+
 - **Interior-span chunks** — chunks not at message boundaries.
   Required for tools-schema reuse since the block has no internal
   turn boundary.
 - **Accumulated reuse** — same chunk re-spliced across turns of one
   session.
 
-Defer until item 1 has a corpus to test against.
+Multi-segment composition is empirically clean (handled).
 
-### 3. Document admission rules
+### 4. Document admission rules
 
 Pen-and-paper, no measurement. Already converging from goose +
-opencode. Probable shape:
+opencode + gemma4. Current shape:
 
 - Always cache the tools-schema block, keyed by `agent_build_id`.
 - Cache `role=tool` blocks past the first turn, keyed by
   `tool_response:tool_name+args_hash`. **Load-bearing rule.**
-- Don't cache role=assistant (server already has the KV).
+- Don't cache role=assistant (server already has the KV; and donors
+  whose assistant content gets matched produce a degenerate "same-task
+  replay" regime, not a production scenario).
 - Don't cache anything touching the memory section (drifts every
   turn).
-
-Output: a written admission policy in this repo + a sketch of the
-agent-side request-render hook that would supply the keys.
-
-### 4. Runtime cache strategy decision
-
-Three options, decide after items 1-3:
-
-- Reagent-design + vendored patched llama.cpp as the engine.
-  Fastest. Constrained to llama.cpp-supported, non-hybrid models.
-- Reagent-design + fresh runtime cache on `transformers serve` or
-  vLLM. More work; not tied to llama.cpp release cadence; could
-  potentially handle hybrid at the cache layer.
-- Both — patched llama.cpp as the proof / research vehicle, fresh
-  implementation as the longer-term home.
-
-Decision depends on which models the eventual consumer cares about
-and what items 1-2 reveal.
+- Prefer donors whose turn position is ≤ recipient's at admission
+  time (gemma4 finding, pending validation per item 2).
+- Floor admission at chunks ≥ ~1k tokens — below that the prefill
+  saving is dwarfed by lookup overhead. The 128-token min-match in
+  `categorize_matches.py` is for measurement, not production
+  admission.
 
 ## In scope / out of scope
 

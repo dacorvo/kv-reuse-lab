@@ -98,13 +98,16 @@ the engine. The patched fork extends it to multi-segment (multiple
 disjoint chunks per request) and to multi-axis-RoPE models.
 
 Whether splicing produces the same output as cold prefill is the
-core correctness question. Measurements are pending against the
-agentcap manifest pipeline through the patched llama-server. See
+core correctness question. End-to-end measurements through the
+patched llama-server (see "Splice-correctness measurements" below)
+confirm clean behaviour on attention-only architectures (Gemma-4
+family) and a 9% catastrophic failure rate on hybrid
+attention+recurrent architectures (Qwen3.6 family). See
 [SCOPE.md](SCOPE.md) for what's bounded vs unbounded.
 
 ## Recurrence analysis — what's known so far
 
-Two corpora measured via `categorize_matches.py`:
+Three corpora measured via `categorize_matches.py`:
 
 **Hermes-Gemma** (`gemma-4-E4B-it`, 27 sessions × 4 turns,
 agentcap-captured). Apparent coverage 86% decomposes to: ~32%
@@ -123,9 +126,44 @@ recurrence:
 - opencode: `read` 65%, `grep` 20%, `glob` 15%. Concentrated on a
   handful of hot files (`chat_template_utils.py`, `trainer.py`, …).
 
-Both confirm the same redesign signal: **request-semantic admission
-on `(tool_name, args_hash)` captures the bulk of non-CP recurrence**.
-No byte-level admission heuristic needed.
+**goose × gemma-4-E4B-it** (`google/gemma-4-E4B-it`, 68 sessions,
+310 requests). Same shape as goose × qwen3.6 — `tree` and `analyze`
+dominate post-prefix tool_response:
+
+- `tree({"path":"."})` 1.78M tokens × 238 matches (top bucket)
+- `tree({"path":"./"})` 227k × 33; `analyze({"path":"."})` 164k × 39
+- 84% match coverage, 57% post-prefix.
+
+Substrate composition reproduces across model families — confirms
+recurrence is a workload property, not a model property.
+
+All three confirm the same redesign signal: **request-semantic
+admission on `(tool_name, args_hash)` captures the bulk of non-CP
+recurrence**. No byte-level admission heuristic needed.
+
+## Splice-correctness measurements
+
+End-to-end through patched llama-server, both corpora measured:
+
+| corpus | model | N | agree | mean KL | mean sim | catastrophic |
+|---|---|---|---|---|---|---|
+| goose × Qwen3.6 | qwen3.6-35B-A3B (hybrid) | 88 | 75% | 4.40 nats | 0.91 | 8 (9%) |
+| goose × Gemma-4 | gemma-4-E4B-it (attention) | 80 | 82.5% | 0.23 nats | 0.92 | 0 |
+
+Hybrid splice produces well-formed but divergent output 9% of the
+time, collapsing to either `</` (token 510, orphan close-tag stream
+like `</parameter>\n</function>\n</tool_call>`) or `<|im_end|>`
+(token 248046, premature end-of-turn). These are recurrent-state
+corruption signatures — the K-shift can rephase attention K/V but
+cannot rewrite the recurrent gated-delta-net layer's compressed
+state. Documented at
+[trace_analysis/results/agentcap_goose_splice_postmortem.md](trace_analysis/results/agentcap_goose_splice_postmortem.md).
+
+Attention-only models splice cleanly. Bottom-quintile divergence on
+Gemma-4 is "soft donor-context bleed": the spliced model produces a
+response shaped by the donor's task framing rather than the
+recipient's. Magnitude correlates with `recipient_turns − donor_turns`
+(see [SCOPE.md](SCOPE.md) for the candidate admission heuristic).
 
 See [`trace_analysis/README.md`](trace_analysis/README.md) for
 methodology and [SCOPE.md](SCOPE.md) for the corpus-derived
@@ -150,12 +188,19 @@ two patches used as a research instrument:
 Findings (see `tools/server/notes/IM_ROPE_SHIFT_INVESTIGATION.md`
 on the branch):
 
-- The splice mechanism is **applicable** to multi-axis-RoPE
-  attention models (Qwen3 VL family, Qwen3 non-3.5).
+- The splice mechanism is **applicable** to full-attention models
+  (Llama-3.x, Qwen3 non-3.5) and to multi-axis-RoPE attention
+  models (Qwen3 VL family).
+- It is **applicable** to SWA models (Gemma-4 family), but
+  llama.cpp's iswa cache layout sizes the SWA buffer smaller than
+  the base buffer by default, blocking the shift gate at
+  `llama-kv-cache-iswa.cpp:223`. Pass `--swa-full` at server launch
+  to equalize the buffers; then K-shift forwards correctly. Cost is
+  the SWA memory savings.
 - It is **not applicable** to hybrid attention+recurrent models
   (Qwen3.5/3.6) — the recurrent state is contextual drift made
   explicit and unrecoverable, and the splice-correctness work
-  reagent has done historically does not bound it.
+  reagent has done does not bound it.
 
 ## Running
 
@@ -202,6 +247,15 @@ For each manifest pair: posts donor + recipient to the server,
 captures the splice events from server stderr (`scheduled splice`
 and `reusing chunk` lines), reports per-pair size scheduled, size
 applied, position shift, and `cache_n` attribution.
+
+Optional flags for specific architectures:
+
+- `--tensor-split 1` — pin to a single GPU (default uses pipeline
+  parallelism across all visible GPUs; small models like
+  Gemma-4-E4B trip ggml's `GGML_SCHED_MAX_SPLIT_INPUTS` limit on
+  multi-GPU split).
+- `--swa-full` — required for SWA models (Gemma-4 family) to bypass
+  the iswa size-mismatch shift gate.
 
 A foundational pre-flight test on a tiny model:
 
