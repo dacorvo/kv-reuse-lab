@@ -1,0 +1,117 @@
+[
+  {
+    "pair_idx": 0,
+    "bucket_id": "tree:af7bc5063a",
+    "expected_chunk_n_tokens": 15304,
+    "expected_drift": -202,
+    "scheduled_splices": [
+      46474
+    ],
+    "applied_splices": [
+      {
+        "size": 46474,
+        "shift": -202
+      }
+    ],
+    "spliced_text": "I have already executed the `tree` command in the previous turn to get an overview of the codebase structure.\n\nBased on the output, I can see the following relevant directories:\n\n1.  **`src/transformers/generation/`**: This directory likely contains the core logic for generation, including `logits_",
+    "cold_text": "<|tool_call>call:analyze{path:<|\"|>src/transformers<|\"|>}<tool_call|>",
+    "top1_match": false,
+    "top1_a": 236777,
+    "top1_b": 48,
+    "top20_jaccard": 0.8182,
+    "kl_approx_nats": 0.392551,
+    "sim_fresh_reused": 0.732
+  },
+  {
+    "pair_idx": 1,
+    "bucket_id": "tree:af7bc5063a",
+    "expected_chunk_n_tokens": 15304,
+    "expected_drift": -202,
+    "scheduled_splices": [
+      46474
+    ],
+    "applied_splices": [
+      {
+        "size": 46474,
+        "shift": -202
+      }
+    ],
+    "spliced_text": "I have already executed the `tree` command in the previous turn to get an overview of the codebase structure.\n\nThe output showed a very large repository, with key directories being:\n*   `src/transformers/generation/`: This likely contains the core generation logic, including `logits_process.py`.\n",
+    "cold_text": "<|tool_call>call:analyze{path:<|\"|>src/transformers<|\"|>}<tool_call|>",
+    "top1_match": false,
+    "top1_a": 236777,
+    "top1_b": 48,
+    "top20_jaccard": 0.7391,
+    "kl_approx_nats": 0.515543,
+    "sim_fresh_reused": 0.686
+  },
+  {
+    "pair_idx": 2,
+    "bucket_id": "tree:af7bc5063a",
+    "expected_chunk_n_tokens": 15304,
+    "expected_drift": -202,
+    "scheduled_splices": [
+      46474
+    ],
+    "applied_splices": [
+      {
+        "size": 46474,
+        "shift": -202
+      }
+    ],
+    "spliced_text": "I have already executed the `tree` command in the previous turn to get an overview of the codebase structure.\n\nThe output showed a very large repository, with key directories being:\n*   `src/transformers/generation/`: This likely contains the core generation logic, including `logits_process.py`.\n",
+    "cold_text": "<|tool_call>call:analyze{path:<|\"|>src/transformers<|\"|>}<tool_call|>",
+    "top1_match": false,
+    "top1_a": 236777,
+    "top1_b": 48,
+    "top20_jaccard": 0.7391,
+    "kl_approx_nats": 0.333079,
+    "sim_fresh_reused": 0.686
+  },
+  {
+    "pair_idx": 3,
+    "bucket_id": "tree:4a5ede2632",
+    "expected_chunk_n_tokens": 12343,
+    "expected_drift": 192,
+    "scheduled_splices": [
+      12359
+    ],
+    "applied_splices": [
+      {
+        "size": 12358,
+        "shift": 192
+      }
+    ],
+    "spliced_text": "The directory structure is quite large, which is expected for a comprehensive library like this.\n\nBased on the file names, the relevant areas for image processing and model implementation seem to be:\n\n1.  **`src/transformers/image_processing_backends.py`** and **`src/transformers/image",
+    "cold_text": "The directory structure is quite large, which is expected for a comprehensive library like this.\n\nBased on the file listing, the most promising areas to investigate for `chat-template` logic are:\n\n1.  **`src/transformers/tokenization/`**: This directory contains tokenizer-related utilities, which is",
+    "top1_match": true,
+    "top1_a": 818,
+    "top1_b": 818,
+    "top20_jaccard": 0.9048,
+    "kl_approx_nats": 0.361569,
+    "sim_fresh_reused": 0.7541
+  },
+  {
+    "pair_idx": 4,
+    "bucket_id": "tree:4a5ede2632",
+    "expected_chunk_n_tokens": 12343,
+    "expected_drift": 192,
+    "scheduled_splices": [
+      12359
+    ],
+    "applied_splices": [
+      {
+        "size": 12359,
+        "shift": 192
+      }
+    ],
+    "spliced_text": "The analysis of `tests/utils/test_chat_template_utils.py` reveals that this file is primarily focused on **JSON Schema Generation** (`JsonSchemaGeneratorTest`), not directly on `chat-template` rendering. The functions and tests listed (`test_simple_function`, `test_union`,",
+    "cold_text": "The analysis of `tests/utils/test_chat_template_utils.py` reveals that this file is primarily focused on **JSON Schema generation** from Python functions, not directly on `chat-template` rendering. The functions tested (`JsonSchemaGeneratorTest.fn`) deal with type hints, docstrings,",
+    "top1_match": true,
+    "top1_a": 818,
+    "top1_b": 818,
+    "top20_jaccard": 0.7391,
+    "kl_approx_nats": 0.009569,
+    "sim_fresh_reused": 0.9808
+  }
+]

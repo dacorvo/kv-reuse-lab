@@ -1,0 +1,497 @@
+{
+  "source": "hf://buckets/dacorvo/agentcap-traces/transformers-coding-session/train-goose-gemma-4-E4B-it-20260507T132405-452151.parquet",
+  "model": "google/gemma-4-E4B-it",
+  "min_match": 128,
+  "n_sessions": 68,
+  "n_requests": 310,
+  "n_requests_with_post_prefix_match": 254,
+  "total_target_tokens": 4567198,
+  "total_matched_tokens": 3825887,
+  "total_cp_tokens": 1243331,
+  "total_post_prefix_tokens": 2582556,
+  "by_category": [
+    {
+      "category": "tool_response",
+      "tokens": 2507029,
+      "frac_of_matched": 0.6552804617595868,
+      "n_matches": 485,
+      "mean_match_length": 5169.131958762887,
+      "median_match_length": 2709,
+      "max_match_length": 15304,
+      "samples": [
+        {
+          "request_id": "f64ec9b1306441f0bfe828b12c5b5d1f",
+          "session_id": "fde2bd18c53d",
+          "tok_range": [
+            4258,
+            16505
+          ],
+          "tokens": 12247,
+          "role": "tool",
+          "snippet": "response:tree{value:<|\"|>benchmark/  [3K]\n  benches/  [353]\n    llama.py  [353]\n  config/  [57]\n    generation.yaml  [57]\n  utils/  [0]\n    init_db.sql  [0]\n  README.md  "
+        },
+        {
+          "request_id": "62aa594d6d4241b99c04b8dda63db608",
+          "session_id": "fde2bd18c53d",
+          "tok_range": [
+            4258,
+            16505
+          ],
+          "tokens": 12247,
+          "role": "tool",
+          "snippet": "response:tree{value:<|\"|>benchmark/  [3K]\n  benches/  [353]\n    llama.py  [353]\n  config/  [57]\n    generation.yaml  [57]\n  utils/  [0]\n    init_db.sql  [0]\n  README.md  "
+        },
+        {
+          "request_id": "4945bffe7b4246398dd907222e96fdcf",
+          "session_id": "fde2bd18c53d",
+          "tok_range": [
+            4258,
+            16505
+          ],
+          "tokens": 12247,
+          "role": "tool",
+          "snippet": "response:tree{value:<|\"|>benchmark/  [3K]\n  benches/  [353]\n    llama.py  [353]\n  config/  [57]\n    generation.yaml  [57]\n  utils/  [0]\n    init_db.sql  [0]\n  README.md  "
+        },
+        {
+          "request_id": "68269fabac524f349d0d966fe6c08976",
+          "session_id": "fde2bd18c53d",
+          "tok_range": [
+            4256,
+            16427
+          ],
+          "tokens": 12171,
+          "role": "tool",
+          "snippet": "README.md  [49]\n  __init__.py  [0]\n  benchmark.py  [324]\n  benchmarks_entrypoint.py  [502]\n  default.yml  [10]\n  grafana_dashboard.json  [2K]\n  grafana_datasource.yaml  [17]"
+        }
+      ],
+      "detail": {
+        "by_tool": [
+          {
+            "tool_name": "tree",
+            "tokens": 2197727,
+            "frac_of_tool_response": 0.8766260781187613,
+            "n_matches": 312
+          },
+          {
+            "tool_name": "analyze",
+            "tokens": 306120,
+            "frac_of_tool_response": 0.12210469045232425,
+            "n_matches": 109
+          },
+          {
+            "tool_name": "shell",
+            "tokens": 3033,
+            "frac_of_tool_response": 0.0012097985304517817,
+            "n_matches": 25
+          },
+          {
+            "tool_name": "todo__todo_write",
+            "tokens": 149,
+            "frac_of_tool_response": 5.943289846268232e-05,
+            "n_matches": 39
+          }
+        ],
+        "by_tool_and_args": [
+          {
+            "tool_name": "tree",
+            "args_hash": "4a5ede2632",
+            "args_sample": "{\"path\":\".\"}",
+            "tokens": 1780819,
+            "frac_of_tool_response": 0.7103304349490971,
+            "n_matches": 238,
+            "snippet": "response:tree{value:<|\"|>benchmark/  [3K]\n  benches/  [353]\n    llama.py  [353]\n  config/  [57]\n    generation.yaml  [57]\n  utils/  [0]\n    init_db.sql  [0]\n  README.md  "
+          },
+          {
+            "tool_name": "tree",
+            "args_hash": "98b2381aac",
+            "args_sample": "{\"path\":\"./\"}",
+            "tokens": 227407,
+            "frac_of_tool_response": 0.09070776604498791,
+            "n_matches": 33,
+            "snippet": "response:tree{value:<|\"|>benchmark/  [3K]\n  benches/  [353]\n    llama.py  [353]\n  config/  [57]\n    generation.yaml  [57]\n  utils/  [0]\n    init_db.sql  [0]\n  README.md  "
+          },
+          {
+            "tool_name": "analyze",
+            "args_hash": "4a5ede2632",
+            "args_sample": "{\"path\":\".\"}",
+            "tokens": 163986,
+            "frac_of_tool_response": 0.06541049186108337,
+            "n_matches": 39,
+            "snippet": "C (depth=3)\n(104 files skipped: no parser)\npython 100%\n\nbenchmark/\n  benches/\n    llama.py [353L, 5F]\n  __init__.py [0L, 0F]\n  benchmark.py [324L, 4F]\n  benchmarks"
+          },
+          {
+            "tool_name": "tree",
+            "args_hash": "a53e8548d8",
+            "args_sample": "{\"depth\":2,\"path\":\"./\"}",
+            "tokens": 131443,
+            "frac_of_tool_response": 0.05242978840691512,
+            "n_matches": 22,
+            "snippet": "response:tree{value:<|\"|>benchmark/  [3K]\n  benches/  [353]\n    llama.py  [353]\n  config/  [57]\n    generation.yaml  [57]\n  utils/  [0]\n    init_db.sql  [0]\n  README.md  "
+          },
+          {
+            "tool_name": "analyze",
+            "args_hash": "734b95abac",
+            "args_sample": "{\"path\":\"/home/ubuntu/agentcap/examples/transformers-coding-session/runs/goose-2026-05-07-1248/sandbox\"}",
+            "tokens": 70611,
+            "frac_of_tool_response": 0.028165210693613836,
+            "n_matches": 27,
+            "snippet": "C (depth=3)\n(104 files skipped: no parser)\npython 100%\n\nbenchmark/\n  benches/\n    llama.py [353L, 5F]\n  __init__.py [0L, 0F]\n  benchmark.py [324L, 4F]\n  benchmarks"
+          },
+          {
+            "tool_name": "tree",
+            "args_hash": "af7bc5063a",
+            "args_sample": "{\"depth\":3,\"path\":\".\"}",
+            "tokens": 47985,
+            "frac_of_tool_response": 0.019140185454575916,
+            "n_matches": 6,
+            "snippet": "response:tree{value:<|\"|>benchmark/  [3K]\n  benches/  [353]\n    llama.py  [353]\n  config/  [57]\n    generation.yaml  [57]\n  utils/  [0]\n    init_db.sql  [0]\n  README.md  "
+          },
+          {
+            "tool_name": "analyze",
+            "args_hash": "0c866e192b",
+            "args_sample": "{\"path\":\"src/transformers/modeling_utils.py\"}",
+            "tokens": 40617,
+            "frac_of_tool_response": 0.01620124856952193,
+            "n_matches": 12,
+            "snippet": "response:analyze{value:<|\"|>modeling_utils.py [5042L, 133F, 6C]\n\nC: LoadStateDictConfig:167 ModuleUtilsMixin:900 EmbeddingAccessMixin:1058 PreTrainedModel:1151(nn.Module, EmbeddingAccessMixin, ModuleUtilsMixin, PushToHub"
+          },
+          {
+            "tool_name": "analyze",
+            "args_hash": "16b773efb6",
+            "args_sample": "{\"path\":\"src/transformers/cache_utils.py\"}",
+            "tokens": 19035,
+            "frac_of_tool_response": 0.0075926524982359595,
+            "n_matches": 7,
+            "snippet": "response:analyze{value:<|\"|>cache_utils.py [1623L, 110F, 16C]\n\nC:\n  CacheLayerMixin:37(ABC)\n  DynamicLayer:109(CacheLayerMixin)\n  DynamicSlidingWindowLayer:190(DynamicLayer)\n  StaticLayer:277"
+          },
+          {
+            "tool_name": "tree",
+            "args_hash": "14ed32176c",
+            "args_sample": "{\"depth\":2,\"path\":\"src/transformers\"}",
+            "tokens": 5384,
+            "frac_of_tool_response": 0.002147561914920011,
+            "n_matches": 4,
+            "snippet": "response:tree{value:<|\"|>cli/  [5K]\n  serving/  [3K]\n    __init__.py  [17]\n    chat_completion.py  [427]\n    completion.py  [275]\n    model_manager.py  [469]\n    response.py  [64"
+          },
+          {
+            "tool_name": "tree",
+            "args_hash": "d6ff003651",
+            "args_sample": "{\"path\":\"src/transformers/utils\"}",
+            "tokens": 4689,
+            "frac_of_tool_response": 0.0018703413482652174,
+            "n_matches": 9,
+            "snippet": "response:tree{value:<|\"|>__init__.py  [336]\nattention_visualizer.py  [255]\nauto_docstring.py  [4K]\nbackbone_utils.py  [19]\nchat_parsing_utils.py  [305]\nchat_template_utils.py  [62"
+          },
+          {
+            "tool_name": "analyze",
+            "args_hash": "8c6a29e2c0",
+            "args_sample": "{\"path\":\"src/transformers/generation\"}",
+            "tokens": 3912,
+            "frac_of_tool_response": 0.0015604127435302902,
+            "n_matches": 12,
+            "snippet": "response:analyze{value:<|\"|>18 files, 17054L, 504F, 109C (depth=3)\npython 100%\n\ncontinuous_batching/\n  __init__.py [29L, 0F]\n  cache.py [704L, 23F, "
+          },
+          {
+            "tool_name": "analyze",
+            "args_hash": "eeaa155e6c",
+            "args_sample": "{\"focus\":null,\"force\":true,\"max_depth\":3,\"path\":\"src/transformers/models\"}",
+            "tokens": 2683,
+            "frac_of_tool_response": 0.0010701910508414542,
+            "n_matches": 1,
+            "snippet": "response:analyze{value:<|\"|>2396 files, 940304L, 27506F, 11382C (depth=3)\n(2 files skipped: no parser)\npython 100%\n\nafmoe/\n  __init__.py [27L, 0F]\n  "
+          },
+          {
+            "tool_name": "analyze",
+            "args_hash": "3db395af1d",
+            "args_sample": "{\"force\":true,\"max_depth\":5,\"path\":\"src/transformers/models\"}",
+            "tokens": 2642,
+            "frac_of_tool_response": 0.0010538370318013872,
+            "n_matches": 1,
+            "snippet": ")\n(2 files skipped: no parser)\npython 100%\n\nafmoe/\n  __init__.py [27L, 0F]\n  configuration_afmoe.py [109L, 1F, 1C]\n  modeling_afmoe.py [693L, 27F,"
+          },
+          {
+            "tool_name": "analyze",
+            "args_hash": "2af15a7835",
+            "args_sample": "{\"path\":\"src/transformers/cli\"}",
+            "tokens": 2536,
+            "frac_of_tool_response": 0.0010115559094051167,
+            "n_matches": 8,
+            "snippet": "response:analyze{value:<|\"|>15 files, 5093L, 174F, 30C (depth=3)\npython 100%\n\nserving/\n  __init__.py [17L, 0F]\n  chat_completion.py [427L, 7F, 2C]\n"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "7eef344004",
+            "args_sample": "{\"command\":\"cat src/transformers/cli/serve.py\"}",
+            "tokens": 1978,
+            "frac_of_tool_response": 0.0007889816990549371,
+            "n_matches": 16,
+            "snippet": "response:shell{value:<|\"|># Copyright 2025 The HuggingFace Team. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "bcf7a24e69",
+            "args_sample": "{\"command\":\"cat src/transformers/cli/transformers.py\"}",
+            "tokens": 576,
+            "frac_of_tool_response": 0.00022975402358728199,
+            "n_matches": 4,
+            "snippet": " The HuggingFace Team. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n#"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "bfaa701a7b",
+            "args_sample": "{\"command\":\"cat src/transformers/utils/hub.py\"}",
+            "tokens": 284,
+            "frac_of_tool_response": 0.00011328149774095154,
+            "n_matches": 2,
+            "snippet": " The HuggingFace Team. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n#"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "7990954511",
+            "args_sample": "{\"command\":\"cat src/transformers/cli/chat.py\"}",
+            "tokens": 195,
+            "frac_of_tool_response": 7.778131006861109e-05,
+            "n_matches": 3,
+            "snippet": " The HuggingFace Team. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n#"
+          },
+          {
+            "tool_name": "todo__todo_write",
+            "args_hash": "6f3f410a68",
+            "args_sample": "{\"content\":\"- [ ] Implement feature: Add `--profile` flag to `transformers serve`.\\n  - [ ] Identify the codebase responsible for `transformers serve`.\\n  - [ ] Modify the server initialization/comman",
+            "tokens": 78,
+            "frac_of_tool_response": 3.111252402744444e-05,
+            "n_matches": 20,
+            "snippet": " chars)<|\"|>}<tool_response|>"
+          },
+          {
+            "tool_name": "todo__todo_write",
+            "args_hash": "304155ec13",
+            "args_sample": "{\"content\":\"# Task: Implement CI check for model generation stability\\n\\n- [ ] **Goal:** Implement a CI check that fails if model generation output changes for a frozen prompt in a PR.\\n\\n- [ ] **Step",
+            "tokens": 55,
+            "frac_of_tool_response": 2.193831822448005e-05,
+            "n_matches": 11,
+            "snippet": " chars)<|\"|>}<tool_response|>"
+          },
+          {
+            "tool_name": "analyze",
+            "args_hash": "df8c8496b0",
+            "args_sample": "{\"path\":\"src/transformers/models\"}",
+            "tokens": 49,
+            "frac_of_tool_response": 1.9545047145445866e-05,
+            "n_matches": 1,
+            "snippet": "response:analyze{value:<|\"|>Output too large (101237 chars, limit 50000). Use `force: true` to override, or narrow scope with max_depth/focus.<|\"|>}<tool_response|>"
+          },
+          {
+            "tool_name": "analyze",
+            "args_hash": "2ba0744d90",
+            "args_sample": "{\"path\":\"src/transformers\"}",
+            "tokens": 49,
+            "frac_of_tool_response": 1.9545047145445866e-05,
+            "n_matches": 1,
+            "snippet": "response:analyze{value:<|\"|>Output too large (115647 chars, limit 50000). Use `force: true` to override, or narrow scope with max_depth/focus.<|\"|>}<tool_response|>"
+          },
+          {
+            "tool_name": "todo__todo_write",
+            "args_hash": "09fae25181",
+            "args_sample": "{\"content\":\"- [x] Analyze current codebase structure to locate components for attention masking, packed sequences, and custom positional encodings.\\n- [ ] Design the end-to-end test case structure, fo",
+            "tokens": 16,
+            "frac_of_tool_response": 6.382056210757833e-06,
+            "n_matches": 8,
+            "snippet": " chars)<|\"|>}<tool_response|>"
+          }
+        ]
+      }
+    },
+    {
+      "category": "common_prefix_served_by_prefix_cache",
+      "tokens": 1243331,
+      "frac_of_matched": 0.32497849518294714,
+      "n_matches": 309,
+      "mean_match_length": 4023.724919093851,
+      "median_match_length": 4018,
+      "max_match_length": 4115,
+      "samples": [
+        {
+          "request_id": "34ed7e0a32a040948eb606036ae3c823",
+          "session_id": "ddc5491e875b",
+          "tok_range": [
+            0,
+            4015
+          ],
+          "tokens": 4015,
+          "role": "system",
+          "snippet": "<bos><|turn>system\nYou are a general-purpose AI agent called goose, created by AAIF (Agentic AI Foundation).\ngoose is being developed as an open-source software project.\n\n# Extensions\n\nExtensions provide additional tools and context from different data sources and applications.\nYou can dynamically enable or disable extensions as needed to help complete tasks.\n\nBecause you dynamically load extensions, your conversation"
+        },
+        {
+          "request_id": "dbdf5ec3191a4f79b3aa543c54e4be24",
+          "session_id": "ddc5491e875b",
+          "tok_range": [
+            0,
+            4015
+          ],
+          "tokens": 4015,
+          "role": "system",
+          "snippet": "<bos><|turn>system\nYou are a general-purpose AI agent called goose, created by AAIF (Agentic AI Foundation).\ngoose is being developed as an open-source software project.\n\n# Extensions\n\nExtensions provide additional tools and context from different data sources and applications.\nYou can dynamically enable or disable extensions as needed to help complete tasks.\n\nBecause you dynamically load extensions, your conversation"
+        },
+        {
+          "request_id": "6fbbf61f7d4b4bdcb5b06f9995d52993",
+          "session_id": "ddc5491e875b",
+          "tok_range": [
+            0,
+            4015
+          ],
+          "tokens": 4015,
+          "role": "system",
+          "snippet": "<bos><|turn>system\nYou are a general-purpose AI agent called goose, created by AAIF (Agentic AI Foundation).\ngoose is being developed as an open-source software project.\n\n# Extensions\n\nExtensions provide additional tools and context from different data sources and applications.\nYou can dynamically enable or disable extensions as needed to help complete tasks.\n\nBecause you dynamically load extensions, your conversation"
+        },
+        {
+          "request_id": "fef6610e02d4439cb3d77ce0f43f8368",
+          "session_id": "d9a32139cb45",
+          "tok_range": [
+            0,
+            4050
+          ],
+          "tokens": 4050,
+          "role": "system",
+          "snippet": "<bos><|turn>system\nYou are a general-purpose AI agent called goose, created by AAIF (Agentic AI Foundation).\ngoose is being developed as an open-source software project.\n\n# Extensions\n\nExtensions provide additional tools and context from different data sources and applications.\nYou can dynamically enable or disable extensions as needed to help complete tasks.\n\nBecause you dynamically load extensions, your conversation"
+        }
+      ],
+      "detail": null
+    },
+    {
+      "category": "assistant_output_should_not_be_cached",
+      "tokens": 74451,
+      "frac_of_matched": 0.01945980108664997,
+      "n_matches": 385,
+      "mean_match_length": 193.3792207792208,
+      "median_match_length": 19,
+      "max_match_length": 1591,
+      "samples": [
+        {
+          "request_id": "fef6610e02d4439cb3d77ce0f43f8368",
+          "session_id": "d9a32139cb45",
+          "tok_range": [
+            4170,
+            5264
+          ],
+          "tokens": 1094,
+          "role": "assistant",
+          "snippet": "<|turn>model\nI understand. Adding a new model architecture with a custom attention variant is a significant task that requires coordination across multiple parts of the framework. Given the complexity, I will provide a structured, step-by-step guide covering the necessary changes in the modeling, tokenizer, and Auto-class components.\n\nBefore I detail the exact implementation steps, I need to understand the existing project structure to"
+        },
+        {
+          "request_id": "24b351b67b7e4587aaa986282cac71e7",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4045,
+            4900
+          ],
+          "tokens": 855,
+          "role": "assistant",
+          "snippet": "<|turn>model\nThis is a classic scenario for using `git bisect`. Since you are dealing with a performance regression, the key is to ensure your performance test is **reproducible** and **measurable** for every commit you test.\n\nHere is a detailed, step-by-step guide on how to bisect the regression.\n\n### \u2699\ufe0f Workflow: Git Bisect for Performance"
+        },
+        {
+          "request_id": "42fcc6d23c6645c79bdc431b0be32dee",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4045,
+            4900
+          ],
+          "tokens": 855,
+          "role": "assistant",
+          "snippet": "<|turn>model\nThis is a classic scenario for using `git bisect`. Since you are dealing with a performance regression, the key is to ensure your performance test is **reproducible** and **measurable** for every commit you test.\n\nHere is a detailed, step-by-step guide on how to bisect the regression.\n\n### \u2699\ufe0f Workflow: Git Bisect for Performance"
+        },
+        {
+          "request_id": "42fcc6d23c6645c79bdc431b0be32dee",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4906,
+            4909
+          ],
+          "tokens": 3,
+          "role": "assistant",
+          "snippet": "<|turn>model\n"
+        }
+      ],
+      "detail": null
+    },
+    {
+      "category": "user_content",
+      "tokens": 1073,
+      "frac_of_matched": 0.00028045783892728665,
+      "n_matches": 176,
+      "mean_match_length": 6.096590909090909,
+      "median_match_length": 3.0,
+      "max_match_length": 93,
+      "samples": [
+        {
+          "request_id": "fef6610e02d4439cb3d77ce0f43f8368",
+          "session_id": "d9a32139cb45",
+          "tok_range": [
+            4168,
+            4170
+          ],
+          "tokens": 2,
+          "role": "user",
+          "snippet": "<turn|>\n"
+        },
+        {
+          "request_id": "fef6610e02d4439cb3d77ce0f43f8368",
+          "session_id": "d9a32139cb45",
+          "tok_range": [
+            5264,
+            5270
+          ],
+          "tokens": 6,
+          "role": "user",
+          "snippet": "<|turn>user\ncontinue<turn|>\n"
+        },
+        {
+          "request_id": "24b351b67b7e4587aaa986282cac71e7",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4043,
+            4045
+          ],
+          "tokens": 2,
+          "role": "user",
+          "snippet": "<turn|>\n"
+        },
+        {
+          "request_id": "24b351b67b7e4587aaa986282cac71e7",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4900,
+            4904
+          ],
+          "tokens": 4,
+          "role": "user",
+          "snippet": "<|turn>user\ncontinue"
+        }
+      ],
+      "detail": null
+    },
+    {
+      "category": "system_other",
+      "tokens": 3,
+      "frac_of_matched": 7.841318888926934e-07,
+      "n_matches": 1,
+      "mean_match_length": 3,
+      "median_match_length": 3,
+      "max_match_length": 3,
+      "samples": [
+        {
+          "request_id": "fef6610e02d4439cb3d77ce0f43f8368",
+          "session_id": "d9a32139cb45",
+          "tok_range": [
+            5270,
+            5273
+          ],
+          "tokens": 3,
+          "role": "unknown",
+          "snippet": "<|turn>model\n"
+        }
+      ],
+      "detail": null
+    }
+  ]
+}
