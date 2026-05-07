@@ -1,0 +1,27 @@
+[
+  {
+    "pair_idx": 0,
+    "bucket_id": "tree:7dc40e8c8a",
+    "expected_chunk_n_tokens": 14041,
+    "expected_drift": 809,
+    "scheduled_splices": [
+      23422,
+      13886
+    ],
+    "applied_splices": [
+      {
+        "size": 23422,
+        "shift": 810
+      },
+      {
+        "size": 13886,
+        "shift": 810
+      }
+    ],
+    "top1_match": false,
+    "top1_a": 248058,
+    "top1_b": 9764,
+    "top20_jaccard": 0.6,
+    "kl_approx_nats": 1.009854
+  }
+]
