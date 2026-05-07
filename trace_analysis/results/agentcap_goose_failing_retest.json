@@ -1,0 +1,211 @@
+[
+  {
+    "pair_idx": 0,
+    "bucket_id": "tree:d6b975e432",
+    "expected_chunk_n_tokens": 11179,
+    "expected_drift": 111,
+    "scheduled_splices": [
+      11210
+    ],
+    "applied_splices": [
+      {
+        "size": 11209,
+        "shift": 207
+      }
+    ],
+    "spliced_text": "</parameter>\n<parameter=depth>\n1\n</parameter>\n</function>\n</tool_call>",
+    "cold_text": "This is the transformers repo. Let me now do a deep analysis of `prepare_inputs_for_generation`.\n\n<tool_call>\n<function=shell>\n<parameter=command>\ngrep -rn \"prepare_inputs_for_generation\" --include=\"*.py\" src/ | wc -l\n</parameter>\n</function>",
+    "top1_match": false,
+    "top1_a": 510,
+    "top1_b": 1919,
+    "top20_jaccard": 0.0256,
+    "kl_approx_nats": 48.794866,
+    "sim_fresh_reused": 0.701
+  },
+  {
+    "pair_idx": 1,
+    "bucket_id": "tree:bca1c9eca9",
+    "expected_chunk_n_tokens": 11179,
+    "expected_drift": -2395,
+    "scheduled_splices": [
+      11198
+    ],
+    "applied_splices": [
+      {
+        "size": 11197,
+        "shift": -6148
+      }
+    ],
+    "spliced_text": "</parameter>\n</function>\n</tool_call>",
+    "cold_text": "Now let me explore the key areas: logits processors, generation, and docs.\n\n<tool_call>\n<function=tree>\n<parameter=path>\n/home/ubuntu/agentcap/examples/transformers-coding-session/runs/goose-2026-05-05-1851/sandbox",
+    "top1_match": false,
+    "top1_a": 510,
+    "top1_b": 6820,
+    "top20_jaccard": 0.0811,
+    "kl_approx_nats": 44.924279,
+    "sim_fresh_reused": 0.678
+  },
+  {
+    "pair_idx": 2,
+    "bucket_id": "tree:d3ae2c92aa",
+    "expected_chunk_n_tokens": 9677,
+    "expected_drift": 5191,
+    "scheduled_splices": [
+      40677
+    ],
+    "applied_splices": [
+      {
+        "size": 40676,
+        "shift": 5574
+      }
+    ],
+    "spliced_text": "</parameter>\n<parameter=depth>\n2\n</parameter>\n</function>\n</tool_call>",
+    "cold_text": "Now let me look at the existing CLI structure in detail:\n\n<tool_call>\n<function=shell>\n<parameter=command>\ncat src/transformers/__init__.py | head -100\n</parameter>\n</function>\n</tool_call>",
+    "top1_match": false,
+    "top1_a": 510,
+    "top1_b": 6820,
+    "top20_jaccard": 0.0256,
+    "kl_approx_nats": 47.707444,
+    "sim_fresh_reused": 0.7611
+  },
+  {
+    "pair_idx": 3,
+    "bucket_id": "tree:cfeae83595",
+    "expected_chunk_n_tokens": 7931,
+    "expected_drift": 6927,
+    "scheduled_splices": [
+      37299
+    ],
+    "applied_splices": [
+      {
+        "size": 37298,
+        "shift": 7004
+      }
+    ],
+    "spliced_text": "</parameter>\n</function>\n</tool_call>",
+    "cold_text": "Now let me look at the key attention-related files to understand the current state:\n\n<tool_call>\n<function=analyze>\n<parameter=path>\n/home/ubuntu/agentcap/examples/transformers-coding-session/runs/goose-2026-05-06-0621/sandbox",
+    "top1_match": false,
+    "top1_a": 510,
+    "top1_b": 6820,
+    "top20_jaccard": 0.0526,
+    "kl_approx_nats": 48.238315,
+    "sim_fresh_reused": 0.737
+  },
+  {
+    "pair_idx": 4,
+    "bucket_id": "analyze:886dbab073",
+    "expected_chunk_n_tokens": 3205,
+    "expected_drift": -2263,
+    "scheduled_splices": [
+      3224
+    ],
+    "applied_splices": [
+      {
+        "size": 3223,
+        "shift": -1244
+      }
+    ],
+    "spliced_text": "</parameter>\n</function>\n</tool_call>",
+    "cold_text": "<tool_call>\n<function=analyze>\n<parameter=path>\n/home/ubuntu/agentcap/examples/transformers-coding-session/runs/goose-2026-05-05-1851/sandbox/src/transformers/core_model_loading.py\n</parameter>\n<parameter=max_depth",
+    "top1_match": false,
+    "top1_a": 510,
+    "top1_b": 248058,
+    "top20_jaccard": 0.1765,
+    "kl_approx_nats": 41.532826,
+    "sim_fresh_reused": 0.7799
+  },
+  {
+    "pair_idx": 5,
+    "bucket_id": "analyze:e617db3e39",
+    "expected_chunk_n_tokens": 2844,
+    "expected_drift": 4857,
+    "scheduled_splices": [
+      1860,
+      1052,
+      3224
+    ],
+    "applied_splices": [
+      {
+        "size": 1860,
+        "shift": 473
+      },
+      {
+        "size": 1052,
+        "shift": 792
+      },
+      {
+        "size": 3223,
+        "shift": 4044
+      }
+    ],
+    "spliced_text": "</parameter>\n</function>\n</tool_call>",
+    "cold_text": "<tool_call>\n<function=analyze>\n<parameter=path>\nsrc/transformers/cache_utils.py\n</parameter>\n<parameter=max_depth>\n1\n</parameter>\n</function>\n</tool_call>",
+    "top1_match": false,
+    "top1_a": 510,
+    "top1_b": 248058,
+    "top20_jaccard": 0.1111,
+    "kl_approx_nats": 49.476944,
+    "sim_fresh_reused": 0.818
+  },
+  {
+    "pair_idx": 6,
+    "bucket_id": "analyze:380fdbaa53",
+    "expected_chunk_n_tokens": 1687,
+    "expected_drift": -2713,
+    "scheduled_splices": [
+      3275,
+      1711
+    ],
+    "applied_splices": [
+      {
+        "size": 3275,
+        "shift": -1244
+      },
+      {
+        "size": 1710,
+        "shift": -1758
+      }
+    ],
+    "spliced_text": "",
+    "cold_text": "<tool_call>\n<function=analyze>\n<parameter=path>\n/home/ubuntu/agentcap/examples/transformers-coding-session/runs/goose-2026-05-05-1851/sandbox/src/transformers/integrations/accelerate.py\n</parameter>\n<",
+    "top1_match": false,
+    "top1_a": 248046,
+    "top1_b": 248058,
+    "top20_jaccard": 0.2121,
+    "kl_approx_nats": 15.403749,
+    "sim_fresh_reused": null
+  },
+  {
+    "pair_idx": 7,
+    "bucket_id": "tree:5487e2ec5b",
+    "expected_chunk_n_tokens": 985,
+    "expected_drift": -8455,
+    "scheduled_splices": [
+      267,
+      289,
+      992
+    ],
+    "applied_splices": [
+      {
+        "size": 267,
+        "shift": -4245
+      },
+      {
+        "size": 289,
+        "shift": -11760
+      },
+      {
+        "size": 991,
+        "shift": -11862
+      }
+    ],
+    "spliced_text": "",
+    "cold_text": "<tool_call>\n<function=tree>\n<parameter=path>\nsrc/transformers\n</parameter>\n<parameter=depth>\n2\n</parameter>\n</function>\n</tool_call>",
+    "top1_match": false,
+    "top1_a": 248046,
+    "top1_b": 248058,
+    "top20_jaccard": 0.0526,
+    "kl_approx_nats": 49.997874,
+    "sim_fresh_reused": null
+  }
+]
