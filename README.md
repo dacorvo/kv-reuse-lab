@@ -1,31 +1,33 @@
 # reagent — KV cache reuse correctness for agent workloads
 
-Reagent measures whether server-side KV-cache reuse preserves task
-behaviour when a cached block appears at a drifted absolute position
-in a new request, and analyses how often such reusable chunks appear
-in real agent traces. It does **not** ship a runtime cache; it
-characterises the splice mechanism and the substrate, with an eye to
-what a runtime cache would need to handle.
+Reagent characterises whether server-side KV-cache reuse preserves
+task behaviour when a cached block appears at a drifted absolute
+position in a new request, and analyses how often such reusable
+chunks appear in real agent traces. It does **not** ship a runtime
+cache; it characterises the splice mechanism and the substrate, with
+an eye to what a runtime cache would need to handle.
 
-For the orientation note (what reagent owns vs. sibling repos, what's
-known, what's next), read [SCOPE.md](SCOPE.md). This README documents
-the published measurement and the current toolset.
+For the orientation note (what reagent owns vs sibling repos, what's
+known, what's next), read [SCOPE.md](SCOPE.md).
 
 ## What reagent does, in three pieces
 
-1. **Splice-correctness measurement.** Given a cached chunk, does
-   reusing it at a new position produce the same model output as a
-   fresh forward? Two harnesses: `measure_reuse_drift.py` (single
-   chunk, controlled drift) and `measure_multi_splice_b.py`
-   (multi-segment splice on real agent traces). Both compare *naive*
-   reuse (splice cached K/V at original RoPE phases) against
-   *shifted* reuse (re-rotate K to the new positions, matching
-   llama.cpp's `llama_memory_seq_add`).
-2. **Recurrence analysis** in [`trace_analysis/`](trace_analysis/).
-   For real agent corpora (captured by `../agentcap`), how much of a
+1. **Recurrence analysis** in [`trace_analysis/`](trace_analysis/).
+   For real agent corpora captured by `../agentcap`, how much of a
    request can be byte-matched against earlier requests, what
-   fraction is post-prefix, and what request-semantic structure
-   does the recurring content share?
+   fraction is post-prefix (vs CP), and what request-semantic
+   structure does the recurring content share. Output includes a
+   per-request CP/post-prefix breakdown
+   (`analyze_trace_reuse.py`), a match-category and
+   `(tool_name, args_hash)` decomposition (`categorize_matches.py`),
+   and an emitted **splice-candidate manifest** of (donor, recipient,
+   range) triples for downstream correctness measurement.
+2. **Splice-correctness measurement** end-to-end through a patched
+   llama-server. `trace_analysis/test_splice_against_manifest.py`
+   takes the manifest, fetches each pair's request body from the
+   source parquet, posts donor + recipient sequentially to the
+   server, and parses the server's stderr to verify the splice
+   actually fires plus measure the resulting output divergence.
 3. **Mechanism-applicability research instrument** at
    `dacorvo/llama.cpp` branch `feat/cache-reuse-symmetric`. Two
    patches that extend `--cache-reuse` (multi-segment splice;
@@ -36,8 +38,8 @@ the published measurement and the current toolset.
 
 ## Concepts
 
-Two terms do most of the work. Defined precisely so the rest of
-the docs stop drifting.
+Two terms do most of the work. Defined precisely so the rest of the
+docs stop drifting.
 
 ### Common Prefix (CP)
 
@@ -68,11 +70,12 @@ the two requests already diverged before this match begins.
 Post-prefix matches come from two sources:
 
 - **Mid-prefix injection breaks CP early.** Hermes injects a
-  `MEMORY (your personal notes)` block between the system prompt and
-  the tools schema. The system-prompt bytes are identical across two
-  sessions, but as soon as memory differs CP ends — even though
-  ~10k bytes of byte-identical tools-schema sit right after, those
-  bytes are now post-prefix on every cross-session pair.
+  `MEMORY (your personal notes)` block between the system prompt
+  and the tools schema. The system-prompt bytes are identical
+  across two sessions, but as soon as memory differs CP ends —
+  even though ~10k bytes of byte-identical tools-schema sit right
+  after, those bytes are now post-prefix on every cross-session
+  pair.
 - **Recurring content past the first turn.** Tool responses (file
   reads, web fetches, command outputs) that recur when the same
   user/team repeats similar work.
@@ -84,74 +87,49 @@ historically could only stitch one contiguous post-prefix run (the
 fork patch removes that), and it identifies hits by sliding
 byte-search rather than by chunk identity.
 
-## Splice-correctness — what's known
+## Splice mechanism
 
-### Single-chunk, controlled drift
+The splice mechanism: when chunk X appears in request A at position
+p_A and in request B at position p_B ≠ p_A, take A's K/V cells for
+X out of cache, re-rotate K by the position delta to match B's
+RoPE phases, paste it into B's prefill at p_B, and continue
+decoding. This matches what llama.cpp's `--cache-reuse` does in
+the engine. The patched fork extends it to multi-segment (multiple
+disjoint chunks per request) and to multi-axis-RoPE models.
 
-The original published measurement: drift the same prompt by
-duplicating its system content, splice an L=128-token cached chunk
-at the new position, compare next-token distribution and 64-token
-greedy continuation against a cold-prefill baseline. N=20 per cell,
-embedder `bge-small-en-v1.5`. `sim(fresh, reused)` = cosine
-similarity of continuations. `naive → shifted`:
+Whether splicing produces the same output as cold prefill is the
+core correctness question. Measurements are pending against the
+agentcap manifest pipeline through the patched llama-server. See
+[SCOPE.md](SCOPE.md) for what's bounded vs unbounded.
 
-| model | Δ=0 | Δ=100 | Δ=500 | Δ=1000 |
-|---|---|---|---|---|
-| `gemma-4-E4B` | 1.00→1.00 | 0.96→1.00 | 0.93→0.99 | 0.92→0.99 |
-| `gemma-4-31B` | 1.00→1.00 | 0.99→0.99 | 0.95→0.98 | 0.91→0.98 |
-| `gemma-4-26B-A4B` | 0.99→0.99 | 0.98→0.98 | 0.86→0.98 | 0.85→0.99 |
-| `Llama-3.1-8B` | 0.98→0.98 | 0.86→0.94 | 0.79→0.97 | 0.81→0.96 |
-| `gemma-4-E2B` | 0.99→0.99 | 0.96→0.98 | 0.78→0.98 | 0.60→**0.99** |
-| `Llama-3.2-1B` | 0.96→0.96 | 0.79→0.95 | 0.73→0.97 | 0.68→**0.95** |
+## Recurrence analysis — what's known so far
 
-Shifted reuse lifts every model to ≥ 0.94 sim across the drift
-range. The phase error is essentially the whole story for clean,
-structural-edge chunks.
+Two corpora measured via `categorize_matches.py`:
 
-![reagent panel](reagent_panel.png)
+**Hermes-Gemma** (`gemma-4-E4B-it`, 27 sessions × 4 turns,
+agentcap-captured). Apparent coverage 86% decomposes to: ~32%
+Hermes system prefix (prefix-cacheable), ~66% tools-schema
+(post-prefix because Hermes's memory injection breaks CP at
+~4.7k tokens), ~1.4% system_other, ~0.69% tool_response (only
+skills_list — Gemma-4 didn't comply with the "MUST skill_view(name)"
+instruction, so this is artificially small).
 
-This is the bounded, mechanism-level result. It does **not** cover
-interior-span chunks, multi-segment composition, accumulated reuse
-across turns, or hybrid-architecture splicing. See [SCOPE.md](SCOPE.md)
-for the full unbounded-cases list and the trust caveat on pre-fix
-matcher contamination.
+**goose + opencode** (`qwen3.6-35b-a3b`, ~800-1000 requests each).
+Different shape. Post-prefix tool_response is the load-bearing
+recurrence:
 
-### Admission heuristics
+- goose: `tree` 74%, `shell` 15%, `analyze` 10%. Top single bucket
+  `tree({"path":".","depth":2})` → 690k tokens × 62 hits.
+- opencode: `read` 65%, `grep` 20%, `glob` 15%. Concentrated on a
+  handful of hot files (`chat_template_utils.py`, `trainer.py`, …).
 
-Byte-level admission heuristics topped out at r ≈ ±0.30 against
-measured splice safety (best: attention entropy at the chunk;
-expensive K/V perturbation tied at the same ceiling). Useful as
-soft ranking, not a sole gate. For agent workloads, request-semantic
-admission (`tool_response:tool_name+args_hash`) won out as the
-load-bearing rule. See [SCOPE.md](SCOPE.md) for the corpus-derived
-admission policy.
-
-## Recurrence analysis
-
-[`trace_analysis/`](trace_analysis/) ingests agentcap-captured
-corpora and reports:
-
-- Per-request **CP** vs **post-prefix** coverage
-  (`analyze_trace_reuse.py`).
-- Match-category breakdown — what *kind* of bytes recur (Hermes
-  system prefix, tools schema, memory section, tool response, user
-  content) — `categorize_matches.py`.
-- A `(tool_name, args_hash)` drilldown for the `tool_response`
-  category, plus an emitted **splice-candidate manifest** that the
-  `test_splice_against_manifest.py` harness feeds into a llama-server
-  for end-to-end verification.
-
-Headline findings (qwen3.6-35b-a3b captures, May 2026): goose's
-post-prefix tool_response bytes are 74% `tree`, 15% `shell`, 10%
-`analyze` — top single bucket `tree({"path":".","depth":2})` →
-690k tokens × 62 hits. Opencode is 65% `read`, 20% `grep`, 15%
-`glob`, concentrated on a handful of hot files. Both confirm
-that request-semantic admission keyed on `(tool_name, args_hash)`
-captures the bulk of non-CP recurrence — no byte-level
-heuristic needed.
+Both confirm the same redesign signal: **request-semantic admission
+on `(tool_name, args_hash)` captures the bulk of non-CP recurrence**.
+No byte-level admission heuristic needed.
 
 See [`trace_analysis/README.md`](trace_analysis/README.md) for
-detailed methodology.
+methodology and [SCOPE.md](SCOPE.md) for the corpus-derived
+admission policy.
 
 ## Mechanism applicability — llama.cpp fork
 
@@ -160,13 +138,14 @@ two patches used as a research instrument:
 
 1. **Symmetric `--cache-reuse`.** Walks both `head_c` (cache index)
    and `head_p` (recipient index) on miss, snapshots source ranges
-   into a temp seq, applies splices just-in-time during the prefill
-   batch loop. Fixes the "single contiguous run" limitation of the
-   upstream algorithm.
-2. **K-shift for text-only IM-RoPE / M-RoPE.** Forward IMROPE writes
-   per-token positions `(t,t,t,0)` for text inputs; the matching
-   K-shift writes `(δ,δ,δ,0)` and applies it via `ggml_rope_multi`.
-   Mechanically tested at fp32 with `rel_err ~ 0`.
+   into a temp seq, applies splices just-in-time during the
+   prefill batch loop. Fixes the "single contiguous run"
+   limitation of the upstream algorithm.
+2. **K-shift for text-only IM-RoPE / M-RoPE.** Forward IMROPE
+   writes per-token positions `(t,t,t,0)` for text inputs; the
+   matching K-shift writes `(δ,δ,δ,0)` and applies it via
+   `ggml_rope_multi`. Mechanically tested at fp32 with
+   `rel_err ~ 0`.
 
 Findings (see `tools/server/notes/IM_ROPE_SHIFT_INVESTIGATION.md`
 on the branch):
@@ -175,8 +154,8 @@ on the branch):
   attention models (Qwen3 VL family, Qwen3 non-3.5).
 - It is **not applicable** to hybrid attention+recurrent models
   (Qwen3.5/3.6) — the recurrent state is contextual drift made
-  explicit and unrecoverable, and the published splice-correctness
-  result does not bound it.
+  explicit and unrecoverable, and the splice-correctness work
+  reagent has done historically does not bound it.
 
 ## Running
 
@@ -187,20 +166,7 @@ executed via `uv run --script`. Install `uv` once:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Single-chunk drift sweep:
-
-```bash
-./run.sh                                        # full panel
-MODELS="meta-llama/Llama-3.2-1B-Instruct" ./run.sh   # one model
-```
-
-Multi-segment splice (`measure_multi_splice_b.py`) was originally
-driven by public SWE-smith / Nemotron datasets; that path is
-retained as historical infrastructure but the current measurement
-pipeline goes through the agentcap manifest instead — see the
-end-to-end harness below.
-
-Trace recurrence analysis:
+### Recurrence analysis
 
 ```bash
 uv run --script trace_analysis/analyze_trace_reuse.py \
@@ -215,7 +181,15 @@ uv run --script trace_analysis/categorize_matches.py \
     --output trace_analysis/results/<name>_categories.json
 ```
 
-End-to-end against a llama-server with the patched cache-reuse:
+`categorize_matches.py` also emits
+`<name>_categories.splice_candidates.jsonl` next to the JSON — the
+splice-pair manifest the correctness harness consumes.
+
+### End-to-end splice correctness
+
+A patched llama-server with `feat/cache-reuse-symmetric` checked out
+and built (`cd llama.cpp && cmake -B build && cmake --build build
+--target llama-server`):
 
 ```bash
 uv run --script trace_analysis/test_splice_against_manifest.py \
@@ -224,15 +198,21 @@ uv run --script trace_analysis/test_splice_against_manifest.py \
     --top 5
 ```
 
-Tests:
+For each manifest pair: posts donor + recipient to the server,
+captures the splice events from server stderr (`scheduled splice`
+and `reusing chunk` lines), reports per-pair size scheduled, size
+applied, position shift, and `cache_n` attribution.
+
+A foundational pre-flight test on a tiny model:
 
 ```bash
-./test_drift_modes.py        # 59 parametrized tests on drift_modes
-./test_kv_cache.py           # 5 tests on write_kv_span routing
-./test_multi_splice_b.py --model meta-llama/Llama-3.2-1B-Instruct \
-    --device-map cuda:0
 uv run --script trace_analysis/test_cache_reuse_smoke.py
 ```
+
+Spins up llama-server on a free port with a Llama-3.2-1B GGUF and
+verifies the splice mechanism fires on a tailored donor/recipient
+pair. Pre-requisite: a Llama-3.2-1B GGUF at the path baked into
+the script (see the script's header comments).
 
 ## Contributing
 
@@ -245,27 +225,24 @@ Installs a pre-commit hook that runs `uvx ruff format` +
 
 ## Data
 
-Real agent traces captured via the `../agentcap` proxy and stored at
-`hf://buckets/dacorvo/agentcap-traces/`. Hermes / goose / opencode /
-pi runs against `gemma-4-E4B-it` and `qwen3.6-35b-a3b`. Used by
-`trace_analysis/` for substrate composition and recurrence analysis,
-and by the splice harnesses as the source of (donor, recipient)
-pairs.
+Agent traces captured via `../agentcap` and stored at
+`hf://buckets/dacorvo/agentcap-traces/`. Hermes / goose / opencode
+/ pi runs against `gemma-4-E4B-it` and `qwen3.6-35b-a3b`. Used by
+`trace_analysis/` for substrate composition and recurrence
+analysis, and as the source of (donor, recipient) pairs for the
+splice-correctness harness.
 
 ## Relation to CacheSlide
 
 [CacheSlide (USENIX FAST '26)](https://www.usenix.org/system/files/fast26-liu-yang.pdf)
-introduces the phase-drift bound (§3.3), the layer-wise amplification
-result (§5.3), and a production reuse policy based on boundary-token
-recompute (§1.4). We borrow the core measurement idea (KL on the
-next-token distribution as a function of Δ) but make two corrections
-for agent-era serving:
-
-1. **In-context baseline.** CacheSlide extracts the cached chunk
-   from a prefill of the chunk alone. That conflates position drift
-   with "chunk-alone vs chunk-in-context" drift. We baseline from
-   the full agent conversation.
-2. **Semantically valid drift.** We shift only by duplicating the
-   system prompt's own content — redundant by construction — so any
-   divergence is attributable to position rather than to changed
-   downstream task expectations.
+introduces the phase-drift bound (§3.3), the layer-wise
+amplification result (§5.3), and a production reuse policy based on
+boundary-token recompute (§1.4). Reagent's prior splice-correctness
+measurements borrowed the core idea (KL on next-token distribution
+as a function of Δ) but used a full-conversation in-context
+baseline rather than chunk-alone, and shifted the prompt by
+duplicating the system prompt's own content (semantically
+redundant) so any divergence was attributable to position rather
+than to changed downstream task expectations. The current
+agentcap-driven pipeline keeps the in-context principle and
+extends it to multi-segment splices on real workload data.
