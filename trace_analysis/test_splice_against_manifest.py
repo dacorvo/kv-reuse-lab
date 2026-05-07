@@ -1,33 +1,42 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["httpx>=0.27", "pyarrow>=15", "huggingface_hub>=0.25"]
+# dependencies = [
+#   "httpx>=0.27",
+#   "pyarrow>=15",
+#   "huggingface_hub>=0.25",
+#   "sentence-transformers>=3.0",
+# ]
 # ///
 """End-to-end splice-correctness measurement on real agentcap manifest
 pairs through a patched llama-server.
 
-Per pair, two server runs:
+Per pair, two server runs (separate processes — hybrid models leak
+recurrent state across requests inside one server):
 
 * **Spliced**: send donor (cache_prompt=true) then recipient
   (cache_prompt=true). The patched ``--cache-reuse`` fires; the
-  recipient's first generated token comes from the model with the
-  donor's K/V cells spliced into the recipient's prefill at the
+  recipient's prefill is built from the donor's K/V cells at the
   matched ranges, RoPE-rephased.
 
 * **Cold**: send the recipient alone in a fresh server. No splice;
-  the next token is the cold-prefill baseline.
+  cold-prefill baseline.
 
-The harness asks the server for top-N logprobs on the first generated
-token (``logprobs: true, top_logprobs: N``) and reports per pair:
+For each, the recipient generates ``--gen-tokens`` (default 64) tokens
+greedy with logprobs on. Per pair:
 
-* top-1 agreement (does argmax match between spliced and cold).
-* top-5 set Jaccard.
-* approximate KL on the union of observed top-N tokens.
+* top-1 agreement at the first generated token.
+* top-K Jaccard on the first-token top-N distributions.
+* approximate KL on the union of observed top-N tokens (the API only
+  exposes top-N logprobs, not full vocab — so this is renormalized
+  over the union, an under-estimate of the true KL but useful as a
+  first-order signal).
+* sentence-embedding cosine similarity (``BAAI/bge-small-en-v1.5``)
+  between the spliced and cold 64-token continuations.
 
-This is the splice-correctness measurement reagent has historically
-done (KL on next-token distribution + top-1 agreement). We do *not*
-decode tokens past the splice point — the original protocol cared
-about distribution at the boundary, not downstream-generation drift.
+Mirrors the metric set ``measure_multi_splice_b.py`` reported on the
+transformers-based harness: ``kl``, ``agree``, ``sim_fresh_reused``,
+plus splice coverage stats from the server log.
 
 Reasoning is disabled at server launch (``--reasoning off``) to match
 what agentcap captured. Qwen3.5+/3.6 default to reasoning-on which
@@ -182,11 +191,42 @@ def _body(req: dict, *, max_tokens: int, cache_prompt: bool,
         "max_tokens": max_tokens,
         "temperature": 0.0,
         "cache_prompt": cache_prompt,
+        # Verbose response carries the *raw* generated text under
+        # __verbose.content — before chat-format parsing strips
+        # <think>/<tool_call>/etc. into separate fields. We need
+        # that for the continuation-similarity metric since structured
+        # tool calls leave message.content empty.
+        "verbose": True,
     }
     if top_logprobs > 0:
         out["logprobs"] = True
         out["top_logprobs"] = top_logprobs
     return out
+
+
+def _raw_continuation(rr_json: dict) -> str:
+    """Return the unparsed model output. Tries three sources in order:
+      1. ``__verbose.content`` — the raw string the model emitted, before
+         peg-native chat-format splits it into ``content`` /
+         ``reasoning_content`` / ``tool_calls``. Empty for some
+         configurations.
+      2. ``logprobs.content[*].token`` — concatenation of per-token text
+         the sampler observed. Reliable since logprobs are requested.
+      3. ``message.content`` — the parsed/extracted text, which is
+         empty when the model emitted a structured tool call.
+    The continuation-similarity metric needs whatever the model
+    actually emitted, *before* chat-format parsing routes parts into
+    structured fields, so the per-token reconstruction is the
+    authoritative source when present."""
+    choice = rr_json["choices"][0]
+    verbose = choice.get("__verbose") or {}
+    raw = verbose.get("content")
+    if raw:
+        return raw
+    lp = (choice.get("logprobs") or {}).get("content") or []
+    if lp:
+        return "".join(e.get("token", "") for e in lp)
+    return choice["message"].get("content") or ""
 
 
 def _first_token_distribution(rr_json: dict, top_logprobs: int) -> tuple[int, dict[int, float]]:
@@ -271,7 +311,13 @@ def main() -> int:
     ap.add_argument("--n-cache-reuse", type=int, default=128)
     ap.add_argument("--ctx-size", type=int, default=65536)
     ap.add_argument("--top-logprobs", type=int, default=20,
-                    help="Top-N logprobs to request on the first generated token.")
+                    help="Top-N logprobs to request on each generated token.")
+    ap.add_argument("--gen-tokens", type=int, default=64,
+                    help="Tokens to greedy-decode after each prompt — first "
+                    "token feeds the KL/top-1 metrics, the full continuation "
+                    "feeds sim_fresh_reused.")
+    ap.add_argument("--embedder", default="BAAI/bge-small-en-v1.5",
+                    help="Sentence-transformer model for continuation similarity.")
     ap.add_argument(
         "--server-bin",
         type=Path,
@@ -296,6 +342,20 @@ def main() -> int:
     pairs = pairs[: args.top]
     print(f"[manifest] {len(pairs)} pair(s) selected (top by chunk size)",
           flush=True)
+
+    # Embedder for continuation similarity. CPU is fine — bge-small is
+    # tiny and the model server has the GPUs.
+    print(f"[embedder] loading {args.embedder} on CPU ...", flush=True)
+    from sentence_transformers import SentenceTransformer
+    import numpy as np
+    embedder = SentenceTransformer(args.embedder, device="cpu")
+
+    def _sim(a: str, b: str) -> float:
+        if not a or not b:
+            return float("nan")
+        ea, eb = embedder.encode([a, b], convert_to_numpy=True, show_progress_bar=False)
+        denom = float(np.linalg.norm(ea) * np.linalg.norm(eb))
+        return float(np.dot(ea, eb) / denom) if denom > 0 else float("nan")
 
     results = []
     for i, pair in enumerate(pairs):
@@ -325,26 +385,27 @@ def main() -> int:
             with log_lock:
                 fence = len(log_lines)
 
-            print("  [spliced] sending recipient (max_tokens=1, logprobs)...",
+            print(f"  [spliced] sending recipient (max_tokens={args.gen_tokens}, logprobs)...",
                   flush=True)
             rr = httpx.post(url,
-                            json=_body(recip_body, max_tokens=1, cache_prompt=True,
+                            json=_body(recip_body, max_tokens=args.gen_tokens,
+                                       cache_prompt=True,
                                        top_logprobs=args.top_logprobs),
-                            timeout=600.0)
+                            timeout=900.0)
             if rr.status_code != 200:
                 print(f"  recipient error: {rr.status_code} {rr.text[:300]}", flush=True)
                 continue
             rr_json = rr.json()
-            with open(f"/tmp/spl_pair_{i}_resp.json", "w") as fh:
-                json.dump(rr_json, fh, indent=2)
             t = rr_json["timings"]
             print(f"    recipient: cache_n={t['cache_n']} prompt_n={t['prompt_n']} "
-                  f"prompt_ms={t['prompt_ms']:.0f}", flush=True)
+                  f"prompt_ms={t['prompt_ms']:.0f} predicted_n={t.get('predicted_n')}",
+                  flush=True)
             try:
                 top1_spl, dist_spl = _first_token_distribution(rr_json, args.top_logprobs)
             except RuntimeError as e:
                 print(f"  spliced first-token extraction failed: {e}", flush=True)
                 continue
+            text_spl = _raw_continuation(rr_json)
             time.sleep(0.5)
             with log_lock:
                 recipient_lines = log_lines[fence:]
@@ -367,32 +428,47 @@ def main() -> int:
         # ----- COLD run -----
         port = _free_port()
         with _server(args, port) as (url, _ll, _lock):
-            print("  [cold] sending recipient (max_tokens=1, logprobs)...", flush=True)
+            print(f"  [cold] sending recipient (max_tokens={args.gen_tokens}, logprobs)...",
+                  flush=True)
             rr = httpx.post(url,
-                            json=_body(recip_body, max_tokens=1, cache_prompt=True,
+                            json=_body(recip_body, max_tokens=args.gen_tokens,
+                                       cache_prompt=True,
                                        top_logprobs=args.top_logprobs),
-                            timeout=600.0)
+                            timeout=900.0)
             if rr.status_code != 200:
                 print(f"  cold error: {rr.status_code} {rr.text[:300]}", flush=True)
                 continue
             rr_json = rr.json()
             t = rr_json["timings"]
             print(f"    cold: cache_n={t['cache_n']} prompt_n={t['prompt_n']} "
-                  f"prompt_ms={t['prompt_ms']:.0f}", flush=True)
+                  f"prompt_ms={t['prompt_ms']:.0f} predicted_n={t.get('predicted_n')}",
+                  flush=True)
             try:
                 top1_cold, dist_cold = _first_token_distribution(rr_json, args.top_logprobs)
             except RuntimeError as e:
                 print(f"  cold first-token extraction failed: {e}", flush=True)
                 continue
+            text_cold = _raw_continuation(rr_json)
 
         # ----- compare -----
         cmp = _compare_distributions(top1_spl, dist_spl, top1_cold, dist_cold,
                                       args.top_logprobs)
+        sim = _sim(text_spl, text_cold)
+        cmp["sim_fresh_reused"] = round(sim, 4) if sim == sim else None
+        top_k = min(args.top_logprobs, len(dist_spl), len(dist_cold))
         print(f"  [compare] top1_match={cmp['top1_match']} "
-              f"top1_spliced={cmp['top1_a']} top1_cold={cmp['top1_b']} "
-              f"top{min(args.top_logprobs, len(dist_spl), len(dist_cold))}_jaccard="
-              f"{cmp[f'top{min(args.top_logprobs, len(dist_spl), len(dist_cold))}_jaccard']} "
-              f"kl_approx={cmp['kl_approx_nats']} nats", flush=True)
+              f"top1_spl={cmp['top1_a']} top1_cold={cmp['top1_b']} "
+              f"top{top_k}_jaccard={cmp[f'top{top_k}_jaccard']} "
+              f"kl_approx={cmp['kl_approx_nats']} nats "
+              f"sim={cmp['sim_fresh_reused']}",
+              flush=True)
+        # Truncated continuations for inspection (also matches the
+        # transformers harness's 256-char snippet convention).
+        def _trunc(s: str, n: int = 256) -> str:
+            s = s.replace("\n", "\\n")
+            return s if len(s) <= n else s[:n] + "..."
+        print(f"    spliced: {_trunc(text_spl)}", flush=True)
+        print(f"    cold   : {_trunc(text_cold)}", flush=True)
 
         results.append({
             "pair_idx": i,
@@ -401,16 +477,28 @@ def main() -> int:
             "expected_drift": pair["position_drift"],
             "scheduled_splices": scheduled,
             "applied_splices": applied,
+            "spliced_text": text_spl[:512],
+            "cold_text": text_cold[:512],
             **cmp,
         })
 
     print("\n=== summary ===")
     for r in results:
-        sched = sum(r["scheduled_splices"])
         applied = sum(s["size"] for s in r["applied_splices"])
+        sim = r.get("sim_fresh_reused")
+        sim_str = f"{sim:.3f}" if sim is not None else "n/a"
         print(f"pair {r['pair_idx']}: bucket={r['bucket_id']:<22} "
-              f"applied={applied:>6} top1_match={r['top1_match']} "
-              f"kl_approx={r['kl_approx_nats']:.4f}")
+              f"applied={applied:>6} agree={int(r['top1_match'])} "
+              f"kl={r['kl_approx_nats']:.4f} sim={sim_str}")
+    if results:
+        kls = [r["kl_approx_nats"] for r in results]
+        agrees = [int(r["top1_match"]) for r in results]
+        sims = [r.get("sim_fresh_reused") for r in results
+                if r.get("sim_fresh_reused") is not None]
+        sim_part = f" mean_sim={sum(sims)/len(sims):.4f}" if sims else ""
+        print(f"  aggregate (N={len(results)}): "
+              f"mean_kl={sum(kls)/len(kls):.4f} "
+              f"agree_rate={sum(agrees)/len(agrees):.3f}{sim_part}")
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
