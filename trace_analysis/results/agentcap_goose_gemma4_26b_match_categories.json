@@ -1,0 +1,494 @@
+{
+  "source": "hf://buckets/dacorvo/agentcap-traces/transformers-coding-session/train-goose-gemma-4-26B-A4B-it-20260507T190453-0a7f55.parquet",
+  "model": "google/gemma-4-26B-A4B-it",
+  "min_match": 128,
+  "n_sessions": 169,
+  "n_requests": 1139,
+  "n_requests_with_post_prefix_match": 821,
+  "total_target_tokens": 16622581,
+  "total_matched_tokens": 11271211,
+  "total_cp_tokens": 3747571,
+  "total_post_prefix_tokens": 7523640,
+  "by_category": [
+    {
+      "category": "tool_response",
+      "tokens": 7392694,
+      "frac_of_matched": 0.655891722726156,
+      "n_matches": 1356,
+      "mean_match_length": 5451.839233038348,
+      "median_match_length": 2570.0,
+      "max_match_length": 12453,
+      "samples": [
+        {
+          "request_id": "f1286e87ceb04bcfb330e6a87b33276b",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4180,
+            16463
+          ],
+          "tokens": 12283,
+          "role": "tool",
+          "snippet": "response:tree{value:<|\"|>benchmark/  [3K]\n  benches/  [353]\n    llama.py  [353]\n  config/  [57]\n    generation.yaml  [57]\n  utils/  [0]\n    init_db.sql  [0]\n  README.md  "
+        },
+        {
+          "request_id": "8f8f95ba8d8646c19517005546eb7669",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4060,
+            16343
+          ],
+          "tokens": 12283,
+          "role": "tool",
+          "snippet": "response:tree{value:<|\"|>benchmark/  [3K]\n  benches/  [353]\n    llama.py  [353]\n  config/  [57]\n    generation.yaml  [57]\n  utils/  [0]\n    init_db.sql  [0]\n  README.md  "
+        },
+        {
+          "request_id": "aa90bf9921734629b2d9ff6db63002bf",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4060,
+            16343
+          ],
+          "tokens": 12283,
+          "role": "tool",
+          "snippet": "response:tree{value:<|\"|>benchmark/  [3K]\n  benches/  [353]\n    llama.py  [353]\n  config/  [57]\n    generation.yaml  [57]\n  utils/  [0]\n    init_db.sql  [0]\n  README.md  "
+        },
+        {
+          "request_id": "4c7a08f73ffe4659958123b3dd087a84",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4060,
+            16343
+          ],
+          "tokens": 12283,
+          "role": "tool",
+          "snippet": "response:tree{value:<|\"|>benchmark/  [3K]\n  benches/  [353]\n    llama.py  [353]\n  config/  [57]\n    generation.yaml  [57]\n  utils/  [0]\n    init_db.sql  [0]\n  README.md  "
+        }
+      ],
+      "detail": {
+        "by_tool": [
+          {
+            "tool_name": "tree",
+            "tokens": 7059750,
+            "frac_of_tool_response": 0.9549631027606444,
+            "n_matches": 796
+          },
+          {
+            "tool_name": "analyze",
+            "tokens": 254993,
+            "frac_of_tool_response": 0.03449256793261022,
+            "n_matches": 199
+          },
+          {
+            "tool_name": "shell",
+            "tokens": 75281,
+            "frac_of_tool_response": 0.010183161916346058,
+            "n_matches": 346
+          },
+          {
+            "tool_name": "edit",
+            "tokens": 2670,
+            "frac_of_tool_response": 0.0003611673903992239,
+            "n_matches": 15
+          }
+        ],
+        "by_tool_and_args": [
+          {
+            "tool_name": "tree",
+            "args_hash": "4a5ede2632",
+            "args_sample": "{\"path\":\".\"}",
+            "tokens": 7059750,
+            "frac_of_tool_response": 0.9549631027606444,
+            "n_matches": 796,
+            "snippet": "response:tree{value:<|\"|>benchmark/  [3K]\n  benches/  [353]\n    llama.py  [353]\n  config/  [57]\n    generation.yaml  [57]\n  utils/  [0]\n    init_db.sql  [0]\n  README.md  "
+          },
+          {
+            "tool_name": "analyze",
+            "args_hash": "0c866e192b",
+            "args_sample": "{\"path\":\"src/transformers/modeling_utils.py\"}",
+            "tokens": 233455,
+            "frac_of_tool_response": 0.031579150983389814,
+            "n_matches": 77,
+            "snippet": "response:analyze{value:<|\"|>modeling_utils.py [5042L, 133F, 6C]\n\nC: LoadStateDictConfig:167 ModuleUtilsMixin:900 EmbeddingAccessMixin:1058 PreTrainedModel:1151(nn.Module, EmbeddingAccessMixin, ModuleUtilsMixin, PushToHub"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "ad3ac4b0cb",
+            "args_sample": "{\"command\":\"grep -r \\\"apply_chat_template\\\" src/transformers/\"}",
+            "tokens": 26787,
+            "frac_of_tool_response": 0.0036234422796344607,
+            "n_matches": 11,
+            "snippet": "response:shell{value:<|\"|>src/transformers/cli/serving/utils.py:            # Forward tool-use fields so apply_chat_template can handle multi-turn tool conversations\nsrc/transformers/cli/serving/response.py:        # updates the flat tool structure to the one expected by the `apply_chat_template` method.\nsrc/transformers/cli"
+          },
+          {
+            "tool_name": "analyze",
+            "args_hash": "8c6a29e2c0",
+            "args_sample": "{\"path\":\"src/transformers/generation\"}",
+            "tokens": 21250,
+            "frac_of_tool_response": 0.002874459567784085,
+            "n_matches": 50,
+            "snippet": "response:analyze{value:<|\"|>18 files, 17054L, 504F, 109C (depth=3)\npython 100%\n\ncontinuous_batching/\n  __init__.py [29L, 0F]\n  cache.py [704L, 23F, "
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "7eef344004",
+            "args_sample": "{\"command\":\"cat src/transformers/cli/serve.py\"}",
+            "tokens": 10519,
+            "frac_of_tool_response": 0.001422891303224508,
+            "n_matches": 67,
+            "snippet": "response:shell{value:<|\"|># Copyright 2025 The HuggingFace Team. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "62e9a872c0",
+            "args_sample": "{\"command\":\"cat src/transformers/cli/serving/chat_completion.py\"}",
+            "tokens": 10010,
+            "frac_of_tool_response": 0.0013540395422832327,
+            "n_matches": 70,
+            "snippet": " The HuggingFace Team. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n#"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "4126022f8e",
+            "args_sample": "{\"command\":\"cat src/transformers/cli/serving/server.py\"}",
+            "tokens": 9009,
+            "frac_of_tool_response": 0.0012186355880549093,
+            "n_matches": 63,
+            "snippet": " The HuggingFace Team. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n#"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "bf7bd433fe",
+            "args_sample": "{\"command\":\"head -n 150 src/transformers/generation/configuration_utils.py\"}",
+            "tokens": 6345,
+            "frac_of_tool_response": 0.0008582798097689421,
+            "n_matches": 47,
+            "snippet": ".\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in"
+          },
+          {
+            "tool_name": "edit",
+            "args_hash": "eaa5099a3a",
+            "args_sample": "{\"after\":\"import asyncio\\nimport json\\nimport os\\nimport platform\\nimport re\\nimport string\\nimport time\\nfrom collections.abc import Sequence\\nfrom typing import Any, Generator, List, Optional, Tuple",
+            "tokens": 2670,
+            "frac_of_tool_response": 0.0003611673903992239,
+            "n_matches": 15,
+            "snippet": ".\n   2: #\n   3: # Licensed under the Apache License, Version 2.0 (the \"License\");\n   4: # you may not use this file except in compliance with the License.\n   5: # You may obtain a copy of the License at\n   6: #\n   7: #     http://www.apache.org/licenses/"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "9f14093408",
+            "args_sample": "{\"command\":\"cat tests/tokenization/test_tokenization_utils.py\"}",
+            "tokens": 2430,
+            "frac_of_tool_response": 0.00032870290586895656,
+            "n_matches": 18,
+            "snippet": "\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "4407315e4c",
+            "args_sample": "{\"command\":\"head -n 30 src/transformers/cli/chat.py\"}",
+            "tokens": 2212,
+            "frac_of_tool_response": 0.0002992143324206304,
+            "n_matches": 14,
+            "snippet": "response:shell{value:<|\"|># Copyright 2025 The HuggingFace Team. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "7990954511",
+            "args_sample": "{\"command\":\"cat src/transformers/cli/chat.py\"}",
+            "tokens": 2054,
+            "frac_of_tool_response": 0.0002778418801048711,
+            "n_matches": 13,
+            "snippet": "response:shell{value:<|\"|># Copyright 2025 The HuggingFace Team. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "96e57b3b79",
+            "args_sample": "{\"command\":\"cat src/transformers/utils/chat_template_utils.py\"}",
+            "tokens": 1988,
+            "frac_of_tool_response": 0.0002689141468590476,
+            "n_matches": 14,
+            "snippet": " The HuggingFace Team. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n#"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "f4f46222fb",
+            "args_sample": "{\"command\":\"cat examples/pytorch/speech-pretraining/run_wav2vec2_pretraining_no_trainer.py\"}",
+            "tokens": 1950,
+            "frac_of_tool_response": 0.00026377393680842193,
+            "n_matches": 15,
+            "snippet": ". All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "be25b271f0",
+            "args_sample": "{\"command\":\"cat src/transformers/integrations/flex_attention.py\"}",
+            "tokens": 980,
+            "frac_of_tool_response": 0.00013256331183192488,
+            "n_matches": 7,
+            "snippet": " The HuggingFace Inc. team.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "6a8d12e43d",
+            "args_sample": "{\"command\":\"sed -n '573,595p' src/transformers/generation/configuration_utils.py\"}",
+            "tokens": 705,
+            "frac_of_tool_response": 9.536442330766024e-05,
+            "n_matches": 5,
+            "snippet": "    def _get_default_generation_params() -> dict[str, Any]:\n        return {\n            \"max_length\": 20,\n            \"min_length\": 0,\n            \"do_sample\": False,\n            \"use_cache\": True,\n            \"early_stopping\": False,\n            \"num_beams\": 1,"
+          },
+          {
+            "tool_name": "analyze",
+            "args_hash": "0de121506d",
+            "args_sample": "{\"path\":\"src/transformers/debug_utils.py\"}",
+            "tokens": 288,
+            "frac_of_tool_response": 3.895738143632078e-05,
+            "n_matches": 72,
+            "snippet": "\n<|\"|>}<tool_response|>"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "6a40698827",
+            "args_sample": "{\"command\":\"sed -n '570,595p' src/transformers/generation/configuration_utils.py\"}",
+            "tokens": 151,
+            "frac_of_tool_response": 2.042557151695985e-05,
+            "n_matches": 1,
+            "snippet": "        return generation_mode\n\n    @staticmethod\n    def _get_default_generation_params() -> dict[str, Any]:\n        return {\n            \"max_length\": 20,\n            \"min_length\": 0,\n            \"do_sample\": False,\n            \"use_cache\": True,\n            \"early_stopping\": False,"
+          },
+          {
+            "tool_name": "shell",
+            "args_hash": "3e56752609",
+            "args_sample": "{\"command\":\"sed -n '573,590p' src/transformers/generation/configuration_utils.py\"}",
+            "tokens": 141,
+            "frac_of_tool_response": 1.907288466153205e-05,
+            "n_matches": 1,
+            "snippet": "    def _get_default_generation_params() -> dict[str, Any]:\n        return {\n            \"max_length\": 20,\n            \"min_length\": 0,\n            \"do_sample\": False,\n            \"use_cache\": True,\n            \"early_stopping\": False,\n            \"num_beams\": 1,"
+          }
+        ]
+      }
+    },
+    {
+      "category": "common_prefix_served_by_prefix_cache",
+      "tokens": 3747571,
+      "frac_of_matched": 0.33249053717475435,
+      "n_matches": 956,
+      "mean_match_length": 3920.053347280335,
+      "median_match_length": 4017.0,
+      "max_match_length": 12417,
+      "samples": [
+        {
+          "request_id": "00a5036c5ced4f9c8a82b205f33a21ca",
+          "session_id": "ddc5491e875b",
+          "tok_range": [
+            0,
+            4015
+          ],
+          "tokens": 4015,
+          "role": "system",
+          "snippet": "<bos><|turn>system\nYou are a general-purpose AI agent called goose, created by AAIF (Agentic AI Foundation).\ngoose is being developed as an open-source software project.\n\n# Extensions\n\nExtensions provide additional tools and context from different data sources and applications.\nYou can dynamically enable or disable extensions as needed to help complete tasks.\n\nBecause you dynamically load extensions, your conversation"
+        },
+        {
+          "request_id": "dc229150e92347e4a8537b2897c58aff",
+          "session_id": "ddc5491e875b",
+          "tok_range": [
+            0,
+            4015
+          ],
+          "tokens": 4015,
+          "role": "system",
+          "snippet": "<bos><|turn>system\nYou are a general-purpose AI agent called goose, created by AAIF (Agentic AI Foundation).\ngoose is being developed as an open-source software project.\n\n# Extensions\n\nExtensions provide additional tools and context from different data sources and applications.\nYou can dynamically enable or disable extensions as needed to help complete tasks.\n\nBecause you dynamically load extensions, your conversation"
+        },
+        {
+          "request_id": "fc7f0175d4814a928031c4e25d9a54cf",
+          "session_id": "ddc5491e875b",
+          "tok_range": [
+            0,
+            4015
+          ],
+          "tokens": 4015,
+          "role": "system",
+          "snippet": "<bos><|turn>system\nYou are a general-purpose AI agent called goose, created by AAIF (Agentic AI Foundation).\ngoose is being developed as an open-source software project.\n\n# Extensions\n\nExtensions provide additional tools and context from different data sources and applications.\nYou can dynamically enable or disable extensions as needed to help complete tasks.\n\nBecause you dynamically load extensions, your conversation"
+        },
+        {
+          "request_id": "5fb6d12eef8c430c9048c64a9a168f50",
+          "session_id": "ddc5491e875b",
+          "tok_range": [
+            0,
+            4015
+          ],
+          "tokens": 4015,
+          "role": "system",
+          "snippet": "<bos><|turn>system\nYou are a general-purpose AI agent called goose, created by AAIF (Agentic AI Foundation).\ngoose is being developed as an open-source software project.\n\n# Extensions\n\nExtensions provide additional tools and context from different data sources and applications.\nYou can dynamically enable or disable extensions as needed to help complete tasks.\n\nBecause you dynamically load extensions, your conversation"
+        }
+      ],
+      "detail": null
+    },
+    {
+      "category": "user_content",
+      "tokens": 114232,
+      "frac_of_matched": 0.010134847089633936,
+      "n_matches": 691,
+      "mean_match_length": 165.31403762662808,
+      "median_match_length": 3,
+      "max_match_length": 12305,
+      "samples": [
+        {
+          "request_id": "f1286e87ceb04bcfb330e6a87b33276b",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4074,
+            4165
+          ],
+          "tokens": 91,
+          "role": "user",
+          "snippet": ":00\nWorking directory: /home/ubuntu/agentcap/examples/transformers-coding-session/runs/goose-2026-05-07-1706/sandbox\nContext: ~4k/128k tokens used (3%)\n\nCurrent tasks and notes:\nOnce given a task, immediately update your todo with all explicit"
+        },
+        {
+          "request_id": "8f8f95ba8d8646c19517005546eb7669",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4043,
+            4045
+          ],
+          "tokens": 2,
+          "role": "user",
+          "snippet": "<turn|>\n"
+        },
+        {
+          "request_id": "8f8f95ba8d8646c19517005546eb7669",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            16343,
+            16371
+          ],
+          "tokens": 28,
+          "role": "user",
+          "snippet": "<|turn>user\n<info-msg>\nIt is currently 2026-05-07 17:0"
+        },
+        {
+          "request_id": "aa90bf9921734629b2d9ff6db63002bf",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4043,
+            4045
+          ],
+          "tokens": 2,
+          "role": "user",
+          "snippet": "<turn|>\n"
+        }
+      ],
+      "detail": null
+    },
+    {
+      "category": "assistant_output_should_not_be_cached",
+      "tokens": 16413,
+      "frac_of_matched": 0.0014561878044870246,
+      "n_matches": 1148,
+      "mean_match_length": 14.297038327526133,
+      "median_match_length": 15.0,
+      "max_match_length": 1481,
+      "samples": [
+        {
+          "request_id": "f1286e87ceb04bcfb330e6a87b33276b",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4165,
+            4180
+          ],
+          "tokens": 15,
+          "role": "assistant",
+          "snippet": "<|turn>model\n<|tool_call>call:tree{{\"path\":\".\"}}<tool_call|><|tool_response>"
+        },
+        {
+          "request_id": "8f8f95ba8d8646c19517005546eb7669",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4045,
+            4060
+          ],
+          "tokens": 15,
+          "role": "assistant",
+          "snippet": "<|turn>model\n<|tool_call>call:tree{{\"path\":\".\"}}<tool_call|><|tool_response>"
+        },
+        {
+          "request_id": "aa90bf9921734629b2d9ff6db63002bf",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4045,
+            4060
+          ],
+          "tokens": 15,
+          "role": "assistant",
+          "snippet": "<|turn>model\n<|tool_call>call:tree{{\"path\":\".\"}}<tool_call|><|tool_response>"
+        },
+        {
+          "request_id": "4c7a08f73ffe4659958123b3dd087a84",
+          "session_id": "ce3936a0927b",
+          "tok_range": [
+            4045,
+            4060
+          ],
+          "tokens": 15,
+          "role": "assistant",
+          "snippet": "<|turn>model\n<|tool_call>call:tree{{\"path\":\".\"}}<tool_call|><|tool_response>"
+        }
+      ],
+      "detail": null
+    },
+    {
+      "category": "system_other",
+      "tokens": 301,
+      "frac_of_matched": 2.6705204968658646e-05,
+      "n_matches": 43,
+      "mean_match_length": 7,
+      "median_match_length": 7,
+      "max_match_length": 7,
+      "samples": [
+        {
+          "request_id": "a0f35ffdbf88429997364319e944c0db",
+          "session_id": "2e5b1b6f7b8a",
+          "tok_range": [
+            1462,
+            1469
+          ],
+          "tokens": 7,
+          "role": "unknown",
+          "snippet": "<|turn>model\n<|channel>thought\n<channel|>"
+        },
+        {
+          "request_id": "251a45d944ba4c2caa6a9fff20f268f4",
+          "session_id": "d73a939cf95b",
+          "tok_range": [
+            314,
+            321
+          ],
+          "tokens": 7,
+          "role": "unknown",
+          "snippet": "<|turn>model\n<|channel>thought\n<channel|>"
+        },
+        {
+          "request_id": "c339766bde8c425cae5355498cdb3a55",
+          "session_id": "d73a939cf95b",
+          "tok_range": [
+            314,
+            321
+          ],
+          "tokens": 7,
+          "role": "unknown",
+          "snippet": "<|turn>model\n<|channel>thought\n<channel|>"
+        },
+        {
+          "request_id": "40088e13ab61473aa005cd779268565f",
+          "session_id": "d73a939cf95b",
+          "tok_range": [
+            314,
+            321
+          ],
+          "tokens": 7,
+          "role": "unknown",
+          "snippet": "<|turn>model\n<|channel>thought\n<channel|>"
+        }
+      ],
+      "detail": null
+    }
+  ]
+}

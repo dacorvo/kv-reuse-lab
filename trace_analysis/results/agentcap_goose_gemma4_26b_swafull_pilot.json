@@ -1,0 +1,117 @@
+[
+  {
+    "pair_idx": 0,
+    "bucket_id": "tree:4a5ede2632",
+    "expected_chunk_n_tokens": 12453,
+    "expected_drift": 235,
+    "scheduled_splices": [
+      12477
+    ],
+    "applied_splices": [
+      {
+        "size": 12476,
+        "shift": 231
+      }
+    ],
+    "spliced_text": "<|channel>thought\n<channel|><|tool_call>call:todo__todo_write{content:<|\"|>- [ ] Explore codebase to understand existing generation tests and CI workflows\n- [ ] Identify the target training example (likely in `examples/pytorch/training/` or similar)\n- [ ] Design the CI job:\n  -",
+    "cold_text": "<|channel>thought\n<channel|><|tool_call>call:shell{command:<|\"|>grep -r \"generation\" tests/models | head -n 20<|\"|>}<tool_call|>",
+    "top1_match": true,
+    "top1_a": 100,
+    "top1_b": 100,
+    "top20_jaccard": 0.4815,
+    "kl_approx_nats": 0.0,
+    "sim_fresh_reused": 0.8331
+  },
+  {
+    "pair_idx": 1,
+    "bucket_id": "tree:4a5ede2632",
+    "expected_chunk_n_tokens": 12453,
+    "expected_drift": 146,
+    "scheduled_splices": [
+      12493
+    ],
+    "applied_splices": [
+      {
+        "size": 12493,
+        "shift": 142
+      }
+    ],
+    "spliced_text": "<|channel>thought\n<channel|><|tool_call>call:analyze{path:<|\"|>examples/pytorch<|\"|>}<tool_call|>",
+    "cold_text": "<|channel>thought\n<channel|><|tool_call>call:analyze{path:<|\"|>tests/models<|\"|>}<tool_call|>",
+    "top1_match": true,
+    "top1_a": 100,
+    "top1_b": 100,
+    "top20_jaccard": 0.6,
+    "kl_approx_nats": 0.0,
+    "sim_fresh_reused": 0.9448
+  },
+  {
+    "pair_idx": 2,
+    "bucket_id": "tree:4a5ede2632",
+    "expected_chunk_n_tokens": 12453,
+    "expected_drift": 146,
+    "scheduled_splices": [
+      12469
+    ],
+    "applied_splices": [
+      {
+        "size": 12469,
+        "shift": 142
+      }
+    ],
+    "spliced_text": "<|channel>thought\n<channel|><|tool_call>call:analyze{max_depth:1,path:<|\"|>examples/pytorch<|\"|>}<tool_call|>",
+    "cold_text": "<|channel>thought\n<channel|><|tool_call>call:analyze{max_depth:1,path:<|\"|>tests/models<|\"|>}<tool_call|>",
+    "top1_match": true,
+    "top1_a": 100,
+    "top1_b": 100,
+    "top20_jaccard": 0.6,
+    "kl_approx_nats": 6e-06,
+    "sim_fresh_reused": 0.9548
+  },
+  {
+    "pair_idx": 3,
+    "bucket_id": "tree:4a5ede2632",
+    "expected_chunk_n_tokens": 12453,
+    "expected_drift": 146,
+    "scheduled_splices": [
+      12469
+    ],
+    "applied_splices": [
+      {
+        "size": 12469,
+        "shift": 142
+      }
+    ],
+    "spliced_text": "<|channel>thought\n<channel|><|tool_call>call:analyze{max_depth:2,path:<|\"|>examples/pytorch<|\"|>}<tool_call|>",
+    "cold_text": "<|channel>thought\n<channel|><|tool_call>call:shell{command:<|\"|>find tests/models -maxdepth 2 -not -path '*/.*'<|\"|>}<tool_call|>",
+    "top1_match": true,
+    "top1_a": 100,
+    "top1_b": 100,
+    "top20_jaccard": 0.6667,
+    "kl_approx_nats": 0.0,
+    "sim_fresh_reused": 0.8562
+  },
+  {
+    "pair_idx": 4,
+    "bucket_id": "tree:4a5ede2632",
+    "expected_chunk_n_tokens": 12453,
+    "expected_drift": 146,
+    "scheduled_splices": [
+      12469
+    ],
+    "applied_splices": [
+      {
+        "size": 12469,
+        "shift": 142
+      }
+    ],
+    "spliced_text": "<|channel>thought\n<channel|><|tool_call>call:shell{command:<|\"|>cat examples/pytorch/language-modeling/README.md<|\"|>}<tool_call|>",
+    "cold_text": "<|channel>thought\n<channel|><|tool_call>call:shell{command:<|\"|>grep -r \"generation\" tests/models/gpt_neox/test_modeling_gpt_neox.py | head -n 20<|\"|>}<tool_call|>",
+    "top1_match": true,
+    "top1_a": 100,
+    "top1_b": 100,
+    "top20_jaccard": 0.3793,
+    "kl_approx_nats": 0.0,
+    "sim_fresh_reused": 0.9018
+  }
+]
