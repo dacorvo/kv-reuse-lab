@@ -23,5 +23,55 @@
     "top1_b": 9764,
     "top20_jaccard": 0.6,
     "kl_approx_nats": 1.009854
+  },
+  {
+    "pair_idx": 1,
+    "bucket_id": "tree:7dc40e8c8a",
+    "expected_chunk_n_tokens": 14041,
+    "expected_drift": 809,
+    "scheduled_splices": [
+      23422,
+      13886
+    ],
+    "applied_splices": [
+      {
+        "size": 23422,
+        "shift": 810
+      },
+      {
+        "size": 13886,
+        "shift": 810
+      }
+    ],
+    "top1_match": true,
+    "top1_a": 248058,
+    "top1_b": 248058,
+    "top20_jaccard": 0.5385,
+    "kl_approx_nats": 0.007021
+  },
+  {
+    "pair_idx": 2,
+    "bucket_id": "tree:7dc40e8c8a",
+    "expected_chunk_n_tokens": 14025,
+    "expected_drift": 833,
+    "scheduled_splices": [
+      23430,
+      13890
+    ],
+    "applied_splices": [
+      {
+        "size": 23430,
+        "shift": 834
+      },
+      {
+        "size": 13889,
+        "shift": 834
+      }
+    ],
+    "top1_match": false,
+    "top1_a": 248058,
+    "top1_b": 1919,
+    "top20_jaccard": 0.2903,
+    "kl_approx_nats": 3.146729
   }
 ]
