@@ -242,28 +242,30 @@ and `kv-cells.h` shift_ext flag). Investigation doc at
 [`tools/server/notes/IM_ROPE_SHIFT_INVESTIGATION.md`](https://github.com/dacorvo/llama.cpp/blob/feat/cache-reuse-symmetric/tools/server/notes/IM_ROPE_SHIFT_INVESTIGATION.md)
 on the branch.
 
-Two open correctness questions the implementation surfaced:
+One genuinely new architectural finding the implementation surfaced:
 
-- **Pre-existing cache-reuse output divergence.** Even on tinyllama
-  (scalar RoPE, non-hybrid), spliced output diverges from cold-prefill
-  output after ~11 chars at temperature 0. This is *not* introduced
-  by either patch — it's a property of upstream master that
-  `--cache-reuse`'s K-shift produces semantically different output.
-  The existing server unit tests only assert `cache_n` ≥ threshold,
-  never gate on output equivalence. Reagent's splice-correctness work
-  has measured this category of failure (see "Mechanism" above) but
-  upstream llama.cpp has no equivalent regression net. Worth filing
-  upstream as an issue independent of this fork.
 - **Hybrid recurrent state on Qwen3.5/3.6.** `LLM_ARCH_QWEN35MOE` is
   in `llm_arch_is_hybrid` — alongside the attention KV cache there's a
   recurrent (gated delta net) state. `llama_memory_recurrent::seq_add`
   only relabels positions; the recurrent state itself was rolled
   forward from the donor's history and isn't recomputable from a
   position relabel. So while the K-shift patch removes the IMROPE
-  blocker, splicing into a hybrid model still produces semantically
-  degraded output because the recurrent state isn't reordered with
-  the splice. **Out of scope for the current branch** — would need a
-  separate redesign of hybrid memory for cache-reuse-with-splice.
+  blocker on the attention side, splicing into a hybrid model still
+  produces degraded output because the recurrent state isn't
+  reordered with the splice. This is *not* the same divergence reagent
+  has been measuring (which is the K-only RoPE-rephasing question);
+  it's an independent blocker specific to hybrid architectures.
+  **Out of scope for the current branch** — would need a separate
+  redesign of hybrid memory for cache-reuse-with-splice.
+
+Output divergence between cold-prefill and shifted-reuse on
+*non-hybrid* models is the question this repo has been measuring
+since day one (see "Mechanism" above and the published
+`measure_reuse_drift.py` results). The bound is sim ≥ 0.95 / top-1
+agreement on chunks ≥ 128 within the trust caveats listed earlier;
+any tinyllama-at-temp-0 character-level divergence we observe in
+the llama.cpp end-to-end test is consistent with that, not a
+contradiction of it.
 
 Net: the symmetric+IMROPE patch is *mechanically correct* and ready
 for non-hybrid IMROPE/MROPE models (any pure-attention transformer
@@ -318,77 +320,60 @@ output is degraded by the orthogonal recurrent-state problem.
 
 ## Next steps in priority order
 
-The picture has shifted: the splice mechanism now exists in a fork
-(symmetric search + IMROPE shift), with mechanical correctness proven.
-The remaining open questions are about *output-level* correctness and
-about admission. Order below reflects that.
+What's actually new since the last SCOPE: the splice mechanism is
+implemented in the llama.cpp fork (symmetric search + IMROPE shift,
+mechanically correct), and we have substrate categorisation on two
+agentcap corpora (goose, opencode). The output-divergence-of-shifted-
+reuse question is *not* new — it's the original reagent question, and
+the published result already says "diverges but at sim ≥ 0.95 / top-1
+agreement on chunks ≥ 128 within the trust caveats above". Items below
+focus on the genuinely open questions.
 
-### 1. Quantify the cache-reuse output-divergence on master
-
-We discovered (on the way to landing the IMROPE patch) that
-`--cache-reuse` on llama.cpp master produces semantically different
-output from cold-prefill — even on tinyllama (scalar RoPE,
-non-hybrid). The unit tests only gate on `cache_n`, never on
-output equivalence. This is independent of either of our patches; it
-is an *unmeasured property of upstream master*.
-
-Concrete probe: pick three (model, prompt-pair) cases — one tinyllama,
-one Qwen3 non-3.5 (single-axis RoPE), one Gemma-4 — run each at
-temperature=0 with and without `--cache-reuse 128`, compare
-continuations character-by-character. If divergence is consistently
-≤ a few tokens / sentence-similarity ≥ 0.9, ship the symmetric+IMROPE
-patch as-is. If it's catastrophically wrong on standard models, the
-splice-as-shipping-strategy needs revisiting *before* any further
-admission-layer work — because reagent's existing splice-correctness
-results (small-N, mostly clean cases) probably overstate what
-production cache-reuse actually delivers.
-
-Deliverable: a short measurement note in `trace_analysis/results/`
-with the three case-pair results and a verdict on whether
-production cache-reuse-with-shift is correct enough to ship.
-
-### 2. Decide what to do about the hybrid-model recurrent state
+### 1. Decide what to do about the hybrid-model recurrent state
 
 For the production target (Qwen3.5/3.6), splice into hybrid models
 produces degraded output regardless of the K-shift patch — the
 recurrent state from the donor doesn't survive a sequence reorder
-into the recipient's path.
+into the recipient's path. This is a llama.cpp-side architectural
+issue, separate from the rephasing mechanism reagent measures.
 
-Two reasonable actions:
+Two reasonable actions before any upstream PR:
 
-- **Tighten `llama_memory_hybrid::get_can_shift` upstream-style** to
-  refuse shift when any cell has a populated recurrent counterpart.
-  Closes the door on hybrid+cache-reuse cleanly until/unless
-  someone solves the recurrent-state-reorder problem.
+- **Tighten `llama_memory_hybrid::get_can_shift`** to refuse shift
+  when any cell has a populated recurrent counterpart. Closes the
+  door on hybrid+cache-reuse cleanly until/unless someone solves the
+  recurrent-state-reorder problem.
 - **Document and shelve.** The K-shift patch lights up the path; the
   recurrent state degrades the output. For non-hybrid IMROPE/MROPE
   the patch is correct as-is. Land it scoped to non-hybrid; open a
   separate issue for hybrid.
 
-Pick one before opening any upstream PR. Recommendation: tighten
-get_can_shift, file the recurrent-state issue separately.
+Recommendation: tighten get_can_shift on this branch, file the
+recurrent-state issue separately. Pick before opening upstream PR.
 
-### 3. Re-run substrate categorisation on a non-hybrid IMROPE model
+### 2. Re-run substrate categorisation on a non-hybrid model
 
 The agentcap captures we have are all on Qwen3.6-35B-A3B (hybrid).
-For an honest end-to-end splice-correctness measurement we'd need
-captures from a non-hybrid model with similar agent workloads:
+For an honest end-to-end splice run on real workload data we'd want
+captures from a non-hybrid model. Candidates with single-axis RoPE
+and no recurrent counterpart:
 
-- **Qwen3 non-3.5** (e.g. Qwen3-32B-Instruct, regular RoPE, non-MoE
-  attention, single-axis position) — closest dialect cousin without
-  the hybrid memory.
-- **Llama-3.3-70B / 3.1-405B** — high compliance with Hermes-style
-  skill loading, single-axis RoPE, non-hybrid.
-- **Gemma-4-26B-A4B-it** — already partially captured, single-axis
-  scalar RoPE, non-hybrid.
+- **Gemma-4-26B-A4B-it** — partially captured already. Hermes-Gemma
+  corpus exists; goose/opencode/pi captures against this model would
+  let us run the manifest test end-to-end with the patched llama.cpp
+  without the recurrent-state confound.
+- **Llama-3.3-70B-Instruct** — high compliance with Hermes-style
+  skill loading.
+- **Qwen3-32B-Instruct** (non-3.5) — closest dialect cousin to
+  Qwen3.6 without the hybrid memory.
 
-The capture+categorize+manifest pipeline already works (see goose
-and opencode results). What's missing is a recapture against a
-non-hybrid model so the end-to-end splice test in `trace_analysis/
-test_splice_against_manifest.py` actually exercises real recurrence
-patterns, not just synthesised donor/recipient pairs.
+The capture+categorize+manifest pipeline already works (goose and
+opencode results landed). What's missing is recapture against a
+non-hybrid model so the end-to-end splice test in
+`trace_analysis/test_splice_against_manifest.py` actually exercises
+real (donor, recipient) recurrence on the production-target patch.
 
-### 4. Document the admission rules the corpora imply
+### 3. Document the admission rules the corpora imply
 
 Already converging from goose + opencode. Probable shape:
 
@@ -409,49 +394,49 @@ Already converging from goose + opencode. Probable shape:
 
 Output: a written admission policy in this repo, plus a sketch of
 the request-render hook on the agent side that would supply the
-keys. Note that this layer can sit on top of patched llama.cpp now
-(blocker (b) from the previous SCOPE doesn't require kv_cache_unified
-surgery — it's an HTTP-layer concern).
+keys. Note that this layer can now sit on top of patched llama.cpp
+(blocker (b) from the previous SCOPE turned out to be an HTTP-layer
+concern, not a kv_cache_unified rewrite).
 
-### 5. Splice-correctness gaps that any runtime cache will hit
-
-Same as before; bumped down because items 1-2 are tighter gates.
+### 4. Splice-correctness gaps that the published result does NOT bound
 
 The published "shifted reuse is essentially indistinguishable" result
-does NOT bound:
+covers ≥ 128-token chunks at structural edges with enough suffix to
+recover. The runtime cache will hit cases the result *does not* cover:
 
-- **Interior-span chunks** — caching mid-message body, not just
-  structural-edge chunks. Required for tools-schema chunks (no
-  internal turn boundary).
+- **Interior-span chunks** — caching mid-message body. Required for
+  tools-schema chunks (no internal turn boundary).
 - **Multi-segment composition** — splicing two or three disjoint
   cached chunks into the same prompt with re-prefilled gaps. The
   symmetric-cache-reuse patch *does* multi-segment splicing today;
   whether per-chunk error adds, multiplies, or saturates is
-  unmeasured. Item 1 partially addresses this.
+  unmeasured. The patched llama.cpp gives us a way to run this on
+  real workloads via the manifest harness.
 - **Accumulated reuse** — same chunk re-spliced across turns 2, 3, 4
   of a session. Errors a single splice hides may compound.
 
-GPU time required. Defer until item 1 has settled the basic
-"does shift produce the right output at all" question.
+GPU time required. Defer until item 2's non-hybrid corpus exists so
+the measurements are on real recurrence patterns, not synthesized
+donor/recipient pairs.
 
-### 6. Runtime cache strategy decision
+### 5. Runtime cache strategy decision
 
 The previous SCOPE assumed a fresh implementation. With the patched
 llama.cpp on the table, there are now three options:
 
 - **Fork-and-ship the patched llama.cpp** + a request-rewriting hook
   that supplies tool_response keys at the HTTP layer. Fastest to a
-  shipping product; inherits whatever output-quality bound item 1
-  finds. Constrained to llama.cpp-supported models.
+  shipping product. Constrained to llama.cpp-supported models, and
+  to non-hybrid attention until item 1 finds a way around the
+  recurrent-state issue.
 - **Fresh implementation on top of `transformers serve` / vLLM.**
   More work; lets us implement chunk-level admission natively and
-  potentially fix the hybrid-recurrent-state issue at the cache
-  layer rather than the engine.
+  potentially work around the hybrid-recurrent-state issue at the
+  cache layer.
 - **Both.** The patched llama.cpp ships first as a proof; the fresh
   implementation is the longer-term home.
 
-Don't decide until items 1–4 are settled. The decision depends on
-what item 1 says about output quality.
+Decide after items 1–3 are settled.
 
 ## What this repo deliberately does NOT do
 
