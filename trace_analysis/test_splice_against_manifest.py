@@ -111,6 +111,10 @@ def _server(args, port: int):
         "--n-gpu-layers", "999",
         "-v",
     ]
+    if args.tensor_split:
+        cmd += ["--tensor-split", args.tensor_split]
+    if args.swa_full:
+        cmd += ["--swa-full"]
     print(f"[server] starting on port {port} ...", flush=True)
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -323,6 +327,17 @@ def main() -> int:
         type=Path,
         default=Path("/home/ubuntu/llama.cpp/build/bin/llama-server"),
     )
+    ap.add_argument("--tensor-split", default=None,
+                    help="llama-server --tensor-split argument (e.g. '1' for "
+                    "single-GPU on a multi-GPU host). Default leaves it unset, "
+                    "which uses pipeline parallelism across all visible GPUs.")
+    ap.add_argument("--swa-full", action="store_true",
+                    help="Pass --swa-full to llama-server. Required for SWA "
+                    "models (Gemma-4 family) to allow K-shift / cache-reuse: "
+                    "by default the SWA cache is sized smaller than the base "
+                    "cache and the iswa size-mismatch assertion blocks shifts. "
+                    "--swa-full equalizes both caches at the cost of the SWA "
+                    "memory savings.")
     ap.add_argument("--output", type=Path, default=None,
                     help="Optional path to dump per-pair results as JSON.")
     args = ap.parse_args()

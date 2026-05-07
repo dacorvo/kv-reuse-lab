@@ -5,6 +5,7 @@
 #   "transformers>=5.5",
 #   "huggingface_hub>=0.25",
 #   "pyarrow>=15",
+#   "jinja2>=3.0",
 # ]
 # ///
 """Classify cross-session cache-reuse matches in an agentcap corpus.
