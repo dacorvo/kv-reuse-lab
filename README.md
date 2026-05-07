@@ -84,14 +84,16 @@ historically could only stitch one contiguous post-prefix run (the
 fork patch removes that), and it identifies hits by sliding
 byte-search rather than by chunk identity.
 
-## Splice-correctness — the published result
+## Splice-correctness — what's known
 
-### Single-chunk, system-duplicate drift
+### Single-chunk, controlled drift
 
-Headline measurement on Hermes function-calling traces, L=128 tokens,
-N=20 examples per cell, embedder `bge-small-en-v1.5`.
-`sim(fresh, reused)` = cosine similarity of greedy continuations.
-`naive → shifted`:
+The original published measurement: drift the same prompt by
+duplicating its system content, splice an L=128-token cached chunk
+at the new position, compare next-token distribution and 64-token
+greedy continuation against a cold-prefill baseline. N=20 per cell,
+embedder `bge-small-en-v1.5`. `sim(fresh, reused)` = cosine
+similarity of continuations. `naive → shifted`:
 
 | model | Δ=0 | Δ=100 | Δ=500 | Δ=1000 |
 |---|---|---|---|---|
@@ -108,64 +110,21 @@ structural-edge chunks.
 
 ![reagent panel](reagent_panel.png)
 
-### Multi-segment shifted reuse on real agent traces
+This is the bounded, mechanism-level result. It does **not** cover
+interior-span chunks, multi-segment composition, accumulated reuse
+across turns, or hybrid-architecture splicing. See [SCOPE.md](SCOPE.md)
+for the full unbounded-cases list and the trust caveat on pre-fix
+matcher contamination.
 
-`measure_multi_splice_b.py` (Scheme B — chunked prefill with cache
-injection, ~17× faster than Scheme A on hybrid models) splices
-multiple disjoint matched chunks into a single prompt with shifted
-RoPE. Same workload as the analysis side (SWE-smith / Nemotron
-trajectories grouped by repo).
+### Admission heuristics
 
-Llama-3.1-8B head-to-head on django, N=20, 190 ordered pairs:
-
-| metric | Llama-3.2-1B | Gemma-4 E4B | Llama-3.1-8B |
-|---|---|---|---|
-| sim mean | 0.974 | 0.981 | 0.975 |
-| **bit-exact** | 29% | 34% | **46%** |
-| sim < 0.95 | 20% | 15% | **9%** |
-| sim < 0.80 | 4% | **1%** | 5% |
-| **min sim** | 0.71 | **0.755** | **0.437** |
-
-Hybrid Gemma-4 has the higher floor (0.755), dense Llama-8B the
-lower floor (0.437) but the best typical case (46% bit-exact).
-Failures cluster at splices landing 6-10k tokens into short B
-trajectories — short enough that the suffix can't recover from the
-cache-conditioning mismatch, long enough that pure RoPE phase isn't
-the cause.
-
-### Trust caveat
-
-Most of the published numbers above predate two matcher fixes
-(`02bad94` input-only role filter; `a3ce1dc` skip first-turn
-matches). Pre-fix runs let assistant-token spans count as splice
-candidates and treated first-turn matches as splices instead of
-prefix-cache hits — both contaminate the splice-correctness signal.
-Treat any pre-fix figure as **indicative, not established**. The
-honest framing: we have seen the mechanism work and we have seen it
-fail, but we don't yet have a clean enough harness to report
-failure rates with confidence.
-
-[SCOPE.md](SCOPE.md) has the full list of unbounded cases (interior-
-span chunks, accumulated multi-turn reuse, hybrid-architecture
-splicing) that the published result does **not** cover.
-
-### Predicting splice safety at write time
-
-On the 56-pair Gemma-4 / Nemotron-pandas-dev run, three candidate
-predictors were Pearson-correlated against measured `sim_fresh_reused`:
-
-| predictor | r vs sim |
-|---|---|
-| attention locality (W=256) | +0.04 (none) |
-| attention entropy at chunk (B) | **+0.36** |
-| K/V perturbation cosine (A) | -0.26 |
-
-Cheap entropy proxy ≈ expensive K/V perturbation; both top out at
-r ≈ ±0.30. **Byte-level admission heuristics topped out** —
-useful as a soft ranking, **not as a sole gate**. For agent
-workloads, request-semantic admission (`tool_response:tool_name+
-args_hash`) won out as the load-bearing rule. See
-[SCOPE.md](SCOPE.md) for the corpus-derived admission policy.
+Byte-level admission heuristics topped out at r ≈ ±0.30 against
+measured splice safety (best: attention entropy at the chunk;
+expensive K/V perturbation tied at the same ceiling). Useful as
+soft ranking, not a sole gate. For agent workloads, request-semantic
+admission (`tool_response:tool_name+args_hash`) won out as the
+load-bearing rule. See [SCOPE.md](SCOPE.md) for the corpus-derived
+admission policy.
 
 ## Recurrence analysis
 
@@ -235,14 +194,11 @@ Single-chunk drift sweep:
 MODELS="meta-llama/Llama-3.2-1B-Instruct" ./run.sh   # one model
 ```
 
-Multi-segment splice on real traces:
-
-```bash
-uv run --script measure_multi_splice_b.py \
-    --model google/gemma-4-E4B-it \
-    --repo django --n-sessions 10 --min-match 128 \
-    --output results/multi_splice_b_django_gemma4.json
-```
+Multi-segment splice (`measure_multi_splice_b.py`) was originally
+driven by public SWE-smith / Nemotron datasets; that path is
+retained as historical infrastructure but the current measurement
+pipeline goes through the agentcap manifest instead — see the
+end-to-end harness below.
 
 Trace recurrence analysis:
 
@@ -289,16 +245,12 @@ Installs a pre-commit hook that runs `uvx ruff format` +
 
 ## Data
 
-Two corpora drive the work:
-
-- `NousResearch/hermes-function-calling-v1` (`func_calling`) —
-  used for the original single-chunk drift measurements. Multi-turn
-  agent traces with system prompt + tools schema + tool calls.
-- **agentcap captures** at `hf://buckets/dacorvo/agentcap-traces/`
-  — captured via the `../agentcap` proxy. Real agent runs (Hermes,
-  goose, opencode, pi) against `gemma-4-E4B-it` and
-  `qwen3.6-35b-a3b`. Used by `trace_analysis/` for substrate
-  composition and recurrence analysis.
+Real agent traces captured via the `../agentcap` proxy and stored at
+`hf://buckets/dacorvo/agentcap-traces/`. Hermes / goose / opencode /
+pi runs against `gemma-4-E4B-it` and `qwen3.6-35b-a3b`. Used by
+`trace_analysis/` for substrate composition and recurrence analysis,
+and by the splice harnesses as the source of (donor, recipient)
+pairs.
 
 ## Relation to CacheSlide
 
