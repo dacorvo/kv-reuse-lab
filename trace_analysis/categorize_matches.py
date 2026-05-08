@@ -10,28 +10,16 @@
 # ///
 """Classify cross-session cache-reuse matches in an agentcap corpus.
 
-`analyze_trace_reuse.py` answers "how much of every prompt is covered by
-byte-exact cross-session matches". This answers the next question:
-*which kind of bytes recur*. That's the load-bearing input for cache
-admission design — if the recurrence is dominated by framework
-boilerplate (system prompt, tool schemas) the cache is uninteresting;
-if it's dominated by user/team substrate (tool responses, project
-context) it earns its keep.
-
-For each match span we identify in a target request, we tag it by:
-  - role (from the row's per-token role labels)
-  - content sub-type (string-pattern match against distinctive markers
-    in the decoded text), e.g. "Hermes system prefix", "tool schema
-    injection", "memory section", "tool response", "user content".
-
-Output is a per-category breakdown of matched-token volume + sample
-snippets per category for verification.
+For each post-CP byte-exact match across two captured requests, tag the
+match by role + content sub-type and aggregate by (tool_name,
+args_hash). Output is a per-category breakdown + a splice-candidate
+manifest the correctness harness consumes.
 
 Usage:
     ./categorize_matches.py \\
-        --source hf://buckets/dacorvo/agentcaps-traces/hermes-gemma-4-E4B-it \\
+        --source hf://buckets/dacorvo/agentcap-traces/<corpus>.parquet \\
         --min-match 128 \\
-        --output trace_analysis/results/agentcap_match_categories.json
+        --output trace_analysis/results/<name>_match_categories.json
 """
 from __future__ import annotations
 
@@ -47,12 +35,8 @@ from typing import Dict, Iterable, List, Tuple
 
 CATEGORY_RULES: List[Tuple[str, re.Pattern]] = [
     # Order matters — first match wins. More specific patterns first.
-    ("hermes_system_prefix", re.compile(r"You are Hermes Agent")),
     ("tools_schema", re.compile(r"<\|tool\|*>\s*declaration:|<\|*tool>declaration:")),
     ("project_context_agentsmd", re.compile(r"# Project Context\b|## AGENTS\.md\b")),
-    ("memory_section", re.compile(r"MEMORY \(your personal notes\)|MEMORY\s+\(your")),
-    ("skills_index", re.compile(r"<available_skills>")),
-    ("hermes_skill_view", re.compile(r"skill_view\(name=")),
     # Generic fallbacks (role-based) handled in classify().
 ]
 
