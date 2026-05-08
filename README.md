@@ -1,4 +1,4 @@
-# reagent — KV cache reuse correctness for agent workloads
+# kv-reuse-lab — KV cache reuse correctness for agent workloads
 
 Measures whether server-side KV-cache reuse preserves task behaviour
 when a cached chunk appears at a different absolute position in a new

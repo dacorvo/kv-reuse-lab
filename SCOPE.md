@@ -1,4 +1,4 @@
-# reagent — scope and next steps
+# kv-reuse-lab — scope and next steps
 
 Orientation note. Read [README.md](README.md) for the headline result
 and the **CP** / **post-prefix matches** terminology.
@@ -8,7 +8,7 @@ and the **CP** / **post-prefix matches** terminology.
 | repo | role |
 |---|---|
 | `../agentcap` | Capture LLM-agent chat-completion traffic via a transparent OpenAI-compat proxy; export as HF datasets. |
-| **`reagent`** (this repo) | Recurrence analysis on captures + splice-correctness harness + admission-policy design. |
+| **`kv-reuse-lab`** (this repo) | Recurrence analysis on captures + splice-correctness harness + admission-policy design. |
 | `dacorvo/llama.cpp` branch `feat/cache-reuse-symmetric` | Research instrument: symmetric `--cache-reuse` (multi-segment splice) + K-shift for IM-RoPE / M-RoPE. SWA models need `--swa-full` to bypass the iswa size-mismatch shift gate. |
 
 ## What's known

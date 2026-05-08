@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# reagent pre-commit hook.
+# kv-reuse-lab pre-commit hook.
 #   - Runs `ruff format` and `ruff check --fix` on staged .py files via uvx.
 #   - Re-stages anything the tools modified so the formatted version lands
 #     in the commit.
