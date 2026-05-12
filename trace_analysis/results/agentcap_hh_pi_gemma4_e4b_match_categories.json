@@ -1,0 +1,12 @@
+{
+  "source": "hf://buckets/dacorvo/agentcap-traces/hf-hub-session/train-pi-gemma-4-E4B-it-local-llama-server-20260512T131803-66ff00.parquet",
+  "model": "google/gemma-4-E4B-it",
+  "min_match": 1024,
+  "n_sessions": 30,
+  "n_requests": 275,
+  "n_requests_with_post_prefix_match": 148,
+  "total_target_tokens": 2221276,
+  "total_cp_tokens": 807334,
+  "total_post_prefix_input_tokens": 762745,
+  "total_post_prefix_model_output_tokens": 22251
+}

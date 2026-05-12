@@ -1,0 +1,12 @@
+{
+  "source": "hf://buckets/dacorvo/agentcap-traces/hf-hub-session/train-goose-gemma-4-E4B-it-local-llama-server-20260512T131529-fcb520.parquet",
+  "model": "google/gemma-4-E4B-it",
+  "min_match": 1024,
+  "n_sessions": 102,
+  "n_requests": 324,
+  "n_requests_with_post_prefix_match": 1,
+  "total_target_tokens": 1942751,
+  "total_cp_tokens": 1459439,
+  "total_post_prefix_input_tokens": 1233,
+  "total_post_prefix_model_output_tokens": 0
+}

@@ -1,0 +1,12 @@
+{
+  "source": "hf://buckets/dacorvo/agentcap-traces/transformers-coding-session/train-goose-Qwen3-Coder-30B-A3B-Instruct-local-llama-server-20260512T134306-710e49.parquet",
+  "model": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+  "min_match": 1024,
+  "n_sessions": 333,
+  "n_requests": 1379,
+  "n_requests_with_post_prefix_match": 805,
+  "total_target_tokens": 21309793,
+  "total_cp_tokens": 5741487,
+  "total_post_prefix_input_tokens": 11048692,
+  "total_post_prefix_model_output_tokens": 57125
+}

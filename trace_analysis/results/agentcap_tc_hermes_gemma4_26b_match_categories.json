@@ -1,0 +1,12 @@
+{
+  "source": "hf://buckets/dacorvo/agentcap-traces/transformers-coding-session/train-hermes-gemma-4-26B-A4B-it-local-llama-server-20260512T141119-05b4c6.parquet",
+  "model": "google/gemma-4-26B-A4B-it",
+  "min_match": 1024,
+  "n_sessions": 127,
+  "n_requests": 1592,
+  "n_requests_with_post_prefix_match": 1558,
+  "total_target_tokens": 29022972,
+  "total_cp_tokens": 7918798,
+  "total_post_prefix_input_tokens": 16098803,
+  "total_post_prefix_model_output_tokens": 40012
+}

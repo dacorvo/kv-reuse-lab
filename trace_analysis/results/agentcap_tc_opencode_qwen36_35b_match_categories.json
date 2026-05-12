@@ -1,0 +1,12 @@
+{
+  "source": "hf://buckets/dacorvo/agentcap-traces/transformers-coding-session/train-opencode-Qwen3.6-35B-A3B-local-llama-server-20260512T141207-801db7.parquet",
+  "model": "unsloth/Qwen3.6-35B-A3B",
+  "min_match": 1024,
+  "n_sessions": 72,
+  "n_requests": 1062,
+  "n_requests_with_post_prefix_match": 267,
+  "total_target_tokens": 18152985,
+  "total_cp_tokens": 8553996,
+  "total_post_prefix_input_tokens": 1309602,
+  "total_post_prefix_model_output_tokens": 2943
+}

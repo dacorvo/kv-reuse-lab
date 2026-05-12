@@ -1,0 +1,12 @@
+{
+  "source": "hf://buckets/dacorvo/agentcap-traces/transformers-coding-session/train-opencode-gemma-4-26B-A4B-it-local-llama-server-20260512T141224-01c7d0.parquet",
+  "model": "google/gemma-4-26B-A4B-it",
+  "min_match": 1024,
+  "n_sessions": 32,
+  "n_requests": 562,
+  "n_requests_with_post_prefix_match": 112,
+  "total_target_tokens": 9686938,
+  "total_cp_tokens": 5509211,
+  "total_post_prefix_input_tokens": 610858,
+  "total_post_prefix_model_output_tokens": 12865
+}

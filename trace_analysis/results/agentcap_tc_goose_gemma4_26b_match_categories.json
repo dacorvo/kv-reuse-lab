@@ -1,0 +1,12 @@
+{
+  "source": "hf://buckets/dacorvo/agentcap-traces/transformers-coding-session/train-goose-gemma-4-26B-A4B-it-local-llama-server-20260512T135906-4f0d87.parquet",
+  "model": "google/gemma-4-26B-A4B-it",
+  "min_match": 1024,
+  "n_sessions": 169,
+  "n_requests": 1139,
+  "n_requests_with_post_prefix_match": 599,
+  "total_target_tokens": 16611553,
+  "total_cp_tokens": 3740626,
+  "total_post_prefix_input_tokens": 7371235,
+  "total_post_prefix_model_output_tokens": 13920
+}
