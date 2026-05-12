@@ -8,12 +8,16 @@
 #   "jinja2>=3.0",
 # ]
 # ///
-"""Classify cross-session cache-reuse matches in an agentcap corpus.
+"""Find cross-session cache-reuse matches in an agentcap corpus.
 
-For each post-CP byte-exact match across two captured requests, tag the
-match by role + content sub-type and aggregate by (tool_name,
-args_hash). Output is a per-category breakdown + a splice-candidate
-manifest the correctness harness consumes.
+For each pair of captured requests, compute:
+  - CP (common prefix — what a standard prefix cache would serve)
+  - post-CP byte-stable matches against any prior session
+
+Model-generated tokens (role=assistant) are excluded — the serving stack
+already has their KV from generating them, and they're not what cache-
+reuse needs to handle. Every non-assistant post-CP match becomes a
+splice-candidate manifest entry.
 
 Usage:
     ./categorize_matches.py \\
@@ -26,33 +30,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import re
-import statistics
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
-
-
-CATEGORY_RULES: List[Tuple[str, re.Pattern]] = [
-    # Order matters — first match wins. More specific patterns first.
-    ("tools_schema", re.compile(r"<\|tool\|*>\s*declaration:|<\|*tool>declaration:")),
-    ("project_context_agentsmd", re.compile(r"# Project Context\b|## AGENTS\.md\b")),
-    # Generic fallbacks (role-based) handled in classify().
-]
-
-
-def classify(role: str, text: str) -> str:
-    if role == "user":
-        return "user_content"
-    if role == "assistant":
-        return "assistant_output_should_not_be_cached"
-    if role == "tool":
-        return "tool_response"
-    # role == "system" or unknown: pattern-match the text.
-    for label, pat in CATEGORY_RULES:
-        if pat.search(text):
-            return label
-    return "system_other"
 
 
 _WANTED_COLS = (
@@ -247,36 +227,6 @@ def find_matches(
     return matches
 
 
-def _tool_call_args_by_id(request: dict) -> Dict[str, str]:
-    """Walk a request body's assistant messages to recover the JSON
-    string passed as ``arguments`` to each tool call, keyed by
-    ``tool_call_id``. Used by the tool_response category drilldown to
-    join a captured ``role=tool`` token range back to the (tool_name,
-    args) pair that produced it."""
-    out: Dict[str, str] = {}
-    for m in request.get("messages") or []:
-        if m.get("role") != "assistant":
-            continue
-        for tc in m.get("tool_calls") or []:
-            tcid = tc.get("id")
-            fn = tc.get("function") or {}
-            if tcid:
-                args = fn.get("arguments")
-                out[tcid] = args if isinstance(args, str) else json.dumps(args, sort_keys=True)
-    return out
-
-
-def _section_for_token(sections: List[dict], pos: int) -> dict | None:
-    """Return the section whose [tok_range[0], tok_range[1]) covers
-    ``pos``. Sections are stored in token order so a linear scan is
-    fine for the lengths we deal with (≤ a few dozen sections)."""
-    for s in sections:
-        tr = s.get("tok_range") or [0, 0]
-        if tr[0] <= pos < tr[1]:
-            return s
-    return None
-
-
 def split_match_by_role(
     start: int, end: int, token_role: List[str]
 ) -> List[Tuple[int, int, str]]:
@@ -302,17 +252,9 @@ def _sample_splice_candidates(
     top_buckets: int,
     per_bucket: int,
 ) -> List[dict]:
-    """Cap manifest size by sampling. The splice-correctness measurement
-    is one model forward per pair, so unbounded emission would be
-    intractable on a 35B model. Strategy:
-      1. Rank buckets by total recurrence-token volume.
-      2. Keep the top ``top_buckets`` of them.
-      3. For each kept bucket, keep the largest ``per_bucket`` candidate
-         pairs (longest chunks first — bigger chunks are where splice
-         savings would matter most).
-
-    The full unsampled list stays in the JSON report's detail block, so
-    nothing is lost — only the JSONL manifest is sampled."""
+    """Cap manifest size. Rank buckets by total recurrence-token volume,
+    keep the top ``top_buckets``, then keep the largest ``per_bucket``
+    candidate pairs per bucket (bigger chunks dominate splice savings)."""
     by_bucket: Dict[str, List[dict]] = defaultdict(list)
     bucket_volume: Dict[str, int] = defaultdict(int)
     for c in candidates:
@@ -326,49 +268,6 @@ def _sample_splice_candidates(
     return out
 
 
-def _build_detail(
-    cat: str,
-    tool_detail_tokens: Dict[Tuple[str, str], int],
-    tool_detail_count: Dict[Tuple[str, str], int],
-    tool_detail_args: Dict[Tuple[str, str], str],
-    tool_detail_snippet: Dict[Tuple[str, str], str],
-    tool_only_tokens: Dict[str, int],
-    tool_only_count: Dict[str, int],
-) -> dict | None:
-    """Per-category drilldown attached as ``by_category[*].detail`` in
-    the output JSON. Today only ``tool_response`` has one — buckets the
-    matched tokens by ``(tool_name, args_hash)`` so a reader can tell
-    whether the recurrence is a few hot tools (cacheable by request
-    semantics) or scattered across many one-offs (admission would need
-    to be content-driven instead). Returns ``None`` for categories
-    without a drilldown."""
-    if cat != "tool_response" or not tool_detail_tokens:
-        return None
-    total = sum(tool_detail_tokens.values())
-    by_tool = [
-        {
-            "tool_name": name,
-            "tokens": toks,
-            "frac_of_tool_response": toks / total,
-            "n_matches": tool_only_count[name],
-        }
-        for name, toks in sorted(tool_only_tokens.items(), key=lambda kv: -kv[1])
-    ]
-    by_tool_args = [
-        {
-            "tool_name": name,
-            "args_hash": ah,
-            "args_sample": tool_detail_args[(name, ah)],
-            "tokens": toks,
-            "frac_of_tool_response": toks / total,
-            "n_matches": tool_detail_count[(name, ah)],
-            "snippet": tool_detail_snippet[(name, ah)],
-        }
-        for (name, ah), toks in sorted(tool_detail_tokens.items(), key=lambda kv: -kv[1])
-    ]
-    return {"by_tool": by_tool, "by_tool_and_args": by_tool_args}
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--source", required=True,
@@ -376,11 +275,9 @@ def main() -> None:
     ap.add_argument("--min-match", type=int, default=128)
     ap.add_argument("--max-tokens-per-session", type=int, default=20000,
                     help="Cap each request's token sequence to bound index memory.")
-    ap.add_argument("--n-samples-per-category", type=int, default=4,
-                    help="How many decoded snippets to keep per category.")
     ap.add_argument("--splice-top-buckets", type=int, default=20,
-                    help="Splice manifest: keep this many top (tool, args) "
-                    "buckets ranked by recurrence volume.")
+                    help="Splice manifest: keep this many top buckets "
+                    "(byte-identical recurring chunks) ranked by volume.")
     ap.add_argument("--splice-per-bucket", type=int, default=5,
                     help="Splice manifest: keep this many largest-chunk "
                     "candidates per kept bucket.")
@@ -401,7 +298,6 @@ def main() -> None:
     if not grouped:
         raise SystemExit("no rows yielded")
 
-    # Order sessions by earliest capture, requests within session by capture+len.
     ordered: List[Tuple[str, dict]] = []
     sids = sorted(grouped.keys(), key=lambda s: min(t for t, _ in grouped[s]))
     for sid in sids:
@@ -420,204 +316,84 @@ def main() -> None:
     from transformers import AutoTokenizer
     tok = AutoTokenizer.from_pretrained(model_id)
 
-    # Incremental cross-session matching, same as analyze_trace_reuse.
     prior_seqs: List[List[int]] = []
     prior_sessions: List[str] = []
-    prior_request_ids: List[str] = []  # parallel — donor lookup for splice manifest
+    prior_request_ids: List[str] = []
     index: Dict[int, List[Tuple[int, int]]] = {}
 
-    cat_tokens: Dict[str, int] = defaultdict(int)
-    cat_match_count: Dict[str, int] = defaultdict(int)
-    cat_lengths: Dict[str, List[int]] = defaultdict(list)
-    cat_samples: Dict[str, List[dict]] = defaultdict(list)
-
-    # tool_response drilldown: group recurrence by (tool_name, args_hash)
-    # so we can answer "which (tool, arguments) pairs account for the
-    # bulk of post-prefix tool_response matches". Args are joined via
-    # tool_call_id from the section that owns the matched tokens.
-    tool_detail_tokens: Dict[Tuple[str, str], int] = defaultdict(int)
-    tool_detail_count: Dict[Tuple[str, str], int] = defaultdict(int)
-    tool_detail_args: Dict[Tuple[str, str], str] = {}
-    tool_detail_snippet: Dict[Tuple[str, str], str] = {}
-
-    # Splice candidate manifest: one entry per (donor, recipient,
-    # token-range) pair where a tool_response chunk recurs. Consumed by
-    # the splice-correctness phase (cache shift compatibility test).
     splice_candidates: List[dict] = []
-
-    total_matched_tokens = 0
     total_target_tokens = 0
     total_cp_tokens = 0
-    total_post_prefix_tokens = 0
+    total_post_prefix_input_tokens = 0
+    total_post_prefix_model_output_tokens = 0
     n_requests_with_post_prefix = 0
 
-    CP_CATEGORY = "common_prefix_served_by_prefix_cache"
-
-    for r_idx, (sid, row) in enumerate(ordered):
+    for sid, row in ordered:
         rendered = row.get("rendered_tokens")
-        if rendered:
-            ids = list(rendered)
-        else:
-            ids = _render_tokens(row, tok)
+        ids = list(rendered) if rendered else _render_tokens(row, tok)
         ids = ids[: args.max_tokens_per_session]
         if not ids:
             continue
         token_role: List[str] = list(row.get("token_role") or [])[: args.max_tokens_per_session]
         total_target_tokens += len(ids)
 
-        # Per-row tool-call args lookup for the tool_response drilldown.
-        row_request = _decode_request(row.get("request"))
-        row_args_by_id = _tool_call_args_by_id(row_request)
-        row_sections = list(row.get("sections") or [])
-
-        # CP first — that's what a standard prefix cache would serve.
         cp = max_common_prefix(ids, prior_seqs, prior_sessions, sid)
         if cp >= args.min_match:
             total_cp_tokens += cp
-            cat_tokens[CP_CATEGORY] += cp
-            cat_match_count[CP_CATEGORY] += 1
-            cat_lengths[CP_CATEGORY].append(cp)
-            total_matched_tokens += cp
-            if len(cat_samples[CP_CATEGORY]) < args.n_samples_per_category:
-                snippet_ids = ids[: min(cp, 80)]
-                snippet = tok.decode(snippet_ids, skip_special_tokens=False)
-                cat_samples[CP_CATEGORY].append({
-                    "request_id": row["request_id"],
-                    "session_id": sid,
-                    "tok_range": [0, cp],
-                    "tokens": cp,
-                    "role": "system",  # CP always starts at system
-                    "snippet": snippet,
-                })
 
-        # Post-prefix matches: scan only past CP.
         spans = find_matches(
             ids, prior_seqs, prior_sessions, index, args.min_match, sid,
             skip_to=cp,
         )
         if spans:
             n_requests_with_post_prefix += 1
-        post_prefix_in_request = sum(e - s for s, e, _, _ in spans)
-        total_post_prefix_tokens += post_prefix_in_request
         for s, e, donor_si, donor_p in spans:
-            donor_len = e - s
             donor_request_id = (
                 prior_request_ids[donor_si] if 0 <= donor_si < len(prior_request_ids) else ""
             )
             for sub_s, sub_e, role in split_match_by_role(s, e, token_role):
-                # Decode a leading snippet of the sub-match (cap for sample storage).
+                length = sub_e - sub_s
+                if role == "assistant":
+                    total_post_prefix_model_output_tokens += length
+                    continue
+                total_post_prefix_input_tokens += length
                 snippet_ids = ids[sub_s : min(sub_e, sub_s + 80)]
                 snippet = tok.decode(snippet_ids, skip_special_tokens=False)
-                full_for_classify = tok.decode(
-                    ids[sub_s : min(sub_e, sub_s + 200)],
-                    skip_special_tokens=False,
-                )
-                cat = classify(role, full_for_classify)
-                length = sub_e - sub_s
-                cat_tokens[cat] += length
-                cat_match_count[cat] += 1
-                cat_lengths[cat].append(length)
-                total_matched_tokens += length
-                if len(cat_samples[cat]) < args.n_samples_per_category:
-                    cat_samples[cat].append({
+                chunk_bytes = b",".join(str(t).encode() for t in ids[sub_s:sub_e])
+                content_hash = hashlib.sha1(chunk_bytes).hexdigest()[:10]
+                donor_sub_start = donor_p + (sub_s - s)
+                donor_sub_end = donor_sub_start + length
+                splice_candidates.append({
+                    "bucket_id": f"{role}:{content_hash}",
+                    "role": role,
+                    "snippet": snippet,
+                    "model": model_id,
+                    "source_parquet": args.source,
+                    "donor": {
+                        "request_id": donor_request_id,
+                        "tok_range": [donor_sub_start, donor_sub_end],
+                    },
+                    "recipient": {
                         "request_id": row["request_id"],
-                        "session_id": sid,
                         "tok_range": [sub_s, sub_e],
-                        "tokens": length,
-                        "role": role,
-                        "snippet": snippet,
-                    })
-                if cat == "tool_response":
-                    sec = _section_for_token(row_sections, sub_s)
-                    if sec is not None and sec.get("role") == "tool":
-                        tool_name = sec.get("tool_name") or "<unknown>"
-                        tcid = sec.get("tool_call_id") or ""
-                        args_str = row_args_by_id.get(tcid, "")
-                        # Hash the args to bucket recurrences. Hash on
-                        # the canonicalized JSON so whitespace-only
-                        # differences don't fragment a real recurrence.
-                        ah = hashlib.sha1(args_str.encode("utf-8")).hexdigest()[:10]
-                        key = (tool_name, ah)
-                        tool_detail_tokens[key] += length
-                        tool_detail_count[key] += 1
-                        if key not in tool_detail_args:
-                            tool_detail_args[key] = args_str[:200]
-                        if key not in tool_detail_snippet:
-                            tool_detail_snippet[key] = snippet
-                        # Record one splice-candidate per sub-match.
-                        # Donor offset within its sub-range tracks where
-                        # in the donor's prompt the equivalent bytes lie.
-                        donor_sub_start = donor_p + (sub_s - s)
-                        donor_sub_end = donor_sub_start + length
-                        splice_candidates.append({
-                            "bucket_id": f"{tool_name}:{ah}",
-                            "tool_name": tool_name,
-                            "args_hash": ah,
-                            "args_sample": args_str[:200],
-                            "model": model_id,
-                            "source_parquet": args.source,
-                            "donor": {
-                                "request_id": donor_request_id,
-                                "tok_range": [donor_sub_start, donor_sub_end],
-                            },
-                            "recipient": {
-                                "request_id": row["request_id"],
-                                "tok_range": [sub_s, sub_e],
-                            },
-                            "chunk_n_tokens": length,
-                            "position_drift": sub_s - donor_sub_start,
-                        })
+                    },
+                    "chunk_n_tokens": length,
+                    "position_drift": sub_s - donor_sub_start,
+                })
 
-        # Add to prior pool.
         add_to_index(index, ids, len(prior_seqs), args.min_match)
         prior_seqs.append(ids)
         prior_sessions.append(sid)
         prior_request_ids.append(row["request_id"])
 
-    # Build report.
-    cats_sorted = sorted(cat_tokens.items(), key=lambda kv: -kv[1])
+    pct = lambda x: x / max(total_target_tokens, 1)
     print()
-    print(f"requests:                          {len(ordered)}")
-    print(f"requests with ≥1 post-prefix match:{n_requests_with_post_prefix}")
-    print(f"total target tokens:               {total_target_tokens:,}")
-    print(f"total matched tokens:              {total_matched_tokens:,}  "
-          f"({total_matched_tokens / max(total_target_tokens,1):.2%} of target)")
-    print(f"  CP (prefix-cache served):        {total_cp_tokens:,}  "
-          f"({total_cp_tokens / max(total_target_tokens,1):.2%} of target)")
-    print(f"  post-prefix (non-trivial cache): {total_post_prefix_tokens:,}  "
-          f"({total_post_prefix_tokens / max(total_target_tokens,1):.2%} of target)")
-    print()
-    print(f"{'category':<48} {'tokens':>12} {'frac_of_match':>14} "
-          f"{'n_matches':>10} {'mean_len':>10}")
-    for cat, toks in cats_sorted:
-        n = cat_match_count[cat]
-        mean_len = statistics.mean(cat_lengths[cat]) if cat_lengths[cat] else 0
-        print(f"{cat:<48} {toks:>12,} {toks/max(total_matched_tokens,1):>14.2%} "
-              f"{n:>10} {mean_len:>10.0f}")
-
-    # Tool-response drilldown: rank (tool_name, args_hash) buckets by
-    # tokens. Two passes — by tool only, then by (tool, args).
-    tool_only_tokens: Dict[str, int] = defaultdict(int)
-    tool_only_count: Dict[str, int] = defaultdict(int)
-    for (tool_name, _ah), toks in tool_detail_tokens.items():
-        tool_only_tokens[tool_name] += toks
-        tool_only_count[tool_name] += tool_detail_count[(tool_name, _ah)]
-
-    total_tr_tokens = sum(tool_detail_tokens.values()) or 1
-    if tool_detail_tokens:
-        print()
-        print("tool_response drilldown — by tool name:")
-        print(f"  {'tool':<28} {'tokens':>10} {'frac_of_tr':>12} {'n_matches':>10}")
-        for tool_name, toks in sorted(tool_only_tokens.items(), key=lambda kv: -kv[1])[:10]:
-            print(f"  {tool_name:<28} {toks:>10,} {toks/total_tr_tokens:>12.2%} "
-                  f"{tool_only_count[tool_name]:>10}")
-        print()
-        print("tool_response drilldown — top (tool, args_hash) buckets:")
-        print(f"  {'tool':<20} {'args_hash':<12} {'tokens':>10} {'frac':>8} {'n':>5}")
-        ranked = sorted(tool_detail_tokens.items(), key=lambda kv: -kv[1])
-        for (tool_name, ah), toks in ranked[:10]:
-            print(f"  {tool_name:<20} {ah:<12} {toks:>10,} "
-                  f"{toks/total_tr_tokens:>7.2%} {tool_detail_count[(tool_name, ah)]:>5}")
+    print(f"requests:                            {len(ordered)}")
+    print(f"requests with ≥1 post-prefix match:  {n_requests_with_post_prefix}")
+    print(f"total target tokens:                 {total_target_tokens:,}")
+    print(f"  CP (prefix-cache served):          {total_cp_tokens:,}  ({pct(total_cp_tokens):.2%})")
+    print(f"  post-prefix input (splice cand.):  {total_post_prefix_input_tokens:,}  ({pct(total_post_prefix_input_tokens):.2%})")
+    print(f"  post-prefix model output (skipped):{total_post_prefix_model_output_tokens:,}  ({pct(total_post_prefix_model_output_tokens):.2%})")
 
     out = {
         "source": args.source,
@@ -627,41 +403,14 @@ def main() -> None:
         "n_requests": len(ordered),
         "n_requests_with_post_prefix_match": n_requests_with_post_prefix,
         "total_target_tokens": total_target_tokens,
-        "total_matched_tokens": total_matched_tokens,
         "total_cp_tokens": total_cp_tokens,
-        "total_post_prefix_tokens": total_post_prefix_tokens,
-        "by_category": [
-            {
-                "category": cat,
-                "tokens": toks,
-                "frac_of_matched": toks / max(total_matched_tokens, 1),
-                "n_matches": cat_match_count[cat],
-                "mean_match_length": statistics.mean(cat_lengths[cat]),
-                "median_match_length": statistics.median(cat_lengths[cat]),
-                "max_match_length": max(cat_lengths[cat]),
-                "samples": cat_samples[cat],
-                "detail": _build_detail(
-                    cat,
-                    tool_detail_tokens,
-                    tool_detail_count,
-                    tool_detail_args,
-                    tool_detail_snippet,
-                    tool_only_tokens,
-                    tool_only_count,
-                ),
-            }
-            for cat, toks in cats_sorted
-        ],
+        "total_post_prefix_input_tokens": total_post_prefix_input_tokens,
+        "total_post_prefix_model_output_tokens": total_post_prefix_model_output_tokens,
     }
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_text(json.dumps(out, indent=2))
     print(f"\n[info] wrote {args.output}")
 
-    # Splice-candidate manifest: pair-per-line JSONL alongside the JSON
-    # report. Sampled to keep the splice-correctness phase tractable —
-    # top buckets (most-recurring (tool, args) pairs) get K candidates
-    # each. Pair selection is "nearest-prior-donor" so a recipient is
-    # always paired with the most-recently-seen donor for its bucket.
     if splice_candidates:
         manifest_path = Path(args.output).with_suffix(".splice_candidates.jsonl")
         sampled = _sample_splice_candidates(

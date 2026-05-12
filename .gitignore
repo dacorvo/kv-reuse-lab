@@ -9,3 +9,6 @@ sandbox/
 __pycache__/
 .ruff_cache/
 *.pyc
+
+# Per-run logs from the recurrence-analysis pipeline.
+trace_analysis/results/logs/
