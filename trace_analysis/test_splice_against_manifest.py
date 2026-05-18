@@ -353,7 +353,7 @@ def main() -> int:
     with args.manifest.open() as fh:
         for line in fh:
             pairs.append(json.loads(line))
-    pairs.sort(key=lambda c: -c["chunk_n_tokens"])
+    pairs.sort(key=lambda c: -c["chunk_n_chars"])
     pairs = pairs[: args.top]
     print(f"[manifest] {len(pairs)} pair(s) selected (top by chunk size)",
           flush=True)
@@ -375,7 +375,7 @@ def main() -> int:
     results = []
     for i, pair in enumerate(pairs):
         print(f"\n[pair {i}] bucket={pair['bucket_id']} "
-              f"chunk_n_tokens={pair['chunk_n_tokens']} "
+              f"chunk_n_chars={pair['chunk_n_chars']} "
               f"drift={pair['position_drift']:+}", flush=True)
         try:
             donor_body, recip_body = _fetch_pair_bodies(pair)
@@ -488,7 +488,7 @@ def main() -> int:
         results.append({
             "pair_idx": i,
             "bucket_id": pair["bucket_id"],
-            "expected_chunk_n_tokens": pair["chunk_n_tokens"],
+            "expected_chunk_n_chars": pair["chunk_n_chars"],
             "expected_drift": pair["position_drift"],
             "scheduled_splices": scheduled,
             "applied_splices": applied,

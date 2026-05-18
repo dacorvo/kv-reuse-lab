@@ -2,27 +2,34 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#   "transformers>=5.5",
 #   "huggingface_hub>=0.25",
 #   "pyarrow>=15",
-#   "jinja2>=3.0",
 # ]
 # ///
 """Find cross-session cache-reuse matches in an agentcap corpus.
 
+Operates on the captured *messages* directly — no chat-template render,
+no tokenizer. The recurring chunks we care about (tool outputs, file
+contents, command results) live inside ``message.content`` as plain
+strings; that's the search corpus. Position drift is measured in
+characters and is reported as a hint to the splice test, which
+re-tokenizes server-side and finds the matching span in token space
+itself.
+
 For each pair of captured requests, compute:
-  - CP (common prefix — what a standard prefix cache would serve)
+  - CP (common prefix — what a standard prefix cache would serve, in
+    character units of the linearized message text)
   - post-CP byte-stable matches against any prior session
 
-Model-generated tokens (role=assistant) are excluded — the serving stack
-already has their KV from generating them, and they're not what cache-
-reuse needs to handle. Every non-assistant post-CP match becomes a
-splice-candidate manifest entry.
+Model-generated tokens (role=assistant) are excluded — the serving
+stack already has their KV from generating them, and they're not what
+cache-reuse needs to handle. Every non-assistant post-CP match becomes
+a splice-candidate manifest entry.
 
 Usage:
     ./categorize_matches.py \\
         --source hf://buckets/dacorvo/agentcap-traces/<corpus>.parquet \\
-        --min-match 128 \\
+        --min-match 512 \\
         --output trace_analysis/results/<name>_match_categories.json
 """
 from __future__ import annotations
@@ -35,10 +42,10 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
 
-_WANTED_COLS = (
-    "request_id", "model", "captured_at", "request",
-    "n_tokens", "sections", "token_role", "rendered_tokens",
-)
+# Only need request_id + request body + a couple of metadata fields.
+# Everything else (rendered_tokens, sections, etc.) is gone from the
+# new agentcap export; this script no longer reads it.
+_WANTED_COLS = ("request_id", "model", "captured_at", "request")
 
 
 def _select_cols(pf) -> list[str]:
@@ -76,12 +83,6 @@ def stream_rows(source: str) -> Iterable[dict]:
         return
 
     p = Path(source)
-    if p.is_dir() and (p / "dataset_info.json").exists():
-        from datasets import load_from_disk
-
-        for row in load_from_disk(str(p)):
-            yield row
-        return
     if p.is_file() and p.suffix == ".parquet":
         files = [p]
     elif p.is_dir():
@@ -97,7 +98,9 @@ def stream_rows(source: str) -> Iterable[dict]:
 
 
 def _decode_request(request) -> dict:
-    """Newer exports store ``request`` as a JSON string. Normalize."""
+    """``request`` is JSON-stringified in the parquet (the new export
+    format). Decode it. Older Dataset.to_dict captures may already be
+    dicts; pass those through."""
     if request is None:
         return {}
     if isinstance(request, str):
@@ -108,30 +111,74 @@ def _decode_request(request) -> dict:
     return request
 
 
-def _render_tokens(row: dict, tok) -> List[int]:
-    """Render token ids on the fly when the row doesn't carry
-    ``rendered_tokens``. Mirrors what the serving engine prefilled at
-    capture time (with ``add_generation_prompt=True``)."""
-    req = _decode_request(row.get("request"))
-    msgs = req.get("messages") or []
-    if not msgs:
-        return []
-    try:
-        out = tok.apply_chat_template(
-            msgs,
-            tools=req.get("tools"),
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
+def _flatten_content(content) -> str:
+    """OpenAI content can be a list of typed parts (multimodal-style).
+    Reduce to the concatenated text. ``None`` and non-string types
+    become ``""`` / their ``str()`` representation respectively."""
+    if isinstance(content, list):
+        return "".join(
+            p.get("text", "") for p in content
+            if isinstance(p, dict) and p.get("type") == "text"
         )
-    except Exception:
-        return []
-    ids = out["input_ids"]
-    if hasattr(ids, "tolist"):
-        ids = ids.tolist()
-    if ids and isinstance(ids[0], list):
-        ids = ids[0]
-    return list(ids)
+    if isinstance(content, str):
+        return content
+    if content is None:
+        return ""
+    return str(content)
+
+
+def linearize_request(req_body: dict) -> Tuple[str, List[Tuple[int, int, str, int]]]:
+    """Project ``request.messages`` onto a single search string. Returns
+    ``(text, spans)`` where ``spans`` is a list of
+    ``(start_char, end_char, role, msg_idx)`` so a found match position
+    can be looked up to discover the role of the chunk it falls in.
+
+    Messages are concatenated with a single ``\\n`` separator that
+    *doesn't* belong to any span — recurrence matches that straddle
+    the boundary still find the substantive text on either side."""
+    msgs = req_body.get("messages") or []
+    parts: list[str] = []
+    spans: list[tuple[int, int, str, int]] = []
+    pos = 0
+    for i, m in enumerate(msgs):
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role", "?")
+        content = _flatten_content(m.get("content"))
+        if content:
+            spans.append((pos, pos + len(content), role, i))
+        parts.append(content)
+        parts.append("\n")
+        pos += len(content) + 1
+    return "".join(parts), spans
+
+
+def role_at(spans: List[Tuple[int, int, str, int]], pos: int) -> str:
+    """Look up the role of the message that contains ``pos`` in the
+    linearized text. Returns ``"unknown"`` if ``pos`` falls outside
+    any span (e.g. on a separator newline)."""
+    for s, e, role, _ in spans:
+        if s <= pos < e:
+            return role
+    return "unknown"
+
+
+def split_match_by_role(
+    start: int, end: int, spans: List[Tuple[int, int, str, int]]
+) -> List[Tuple[int, int, str]]:
+    """A match span may straddle role boundaries. Return contiguous
+    (sub_start, sub_end, role) sub-segments by stepping through
+    ``spans``."""
+    out: List[Tuple[int, int, str]] = []
+    i = start
+    while i < end:
+        r = role_at(spans, i)
+        j = i + 1
+        while j < end and role_at(spans, j) == r:
+            j += 1
+        out.append((i, j, r))
+        i = j
+    return out
 
 
 def session_id_for(row: dict) -> str | None:
@@ -142,30 +189,33 @@ def session_id_for(row: dict) -> str | None:
     )
     if not first_user:
         return None
+    # ``first_user`` may be a list (content parts); flatten for hashing.
+    if isinstance(first_user, list):
+        first_user = _flatten_content(first_user)
     return hashlib.sha1(str(first_user).encode("utf-8")).hexdigest()[:12]
 
 
 def add_to_index(
     index: Dict[int, List[Tuple[int, int]]],
-    seq: List[int],
+    text: str,
     seq_idx: int,
     min_n: int,
 ) -> None:
-    if len(seq) < min_n:
+    if len(text) < min_n:
         return
-    for p in range(len(seq) - min_n + 1):
-        index.setdefault(hash(tuple(seq[p : p + min_n])), []).append((seq_idx, p))
+    for p in range(len(text) - min_n + 1):
+        index.setdefault(hash(text[p : p + min_n]), []).append((seq_idx, p))
 
 
 def max_common_prefix(
-    target: List[int],
-    prior_seqs: List[List[int]],
+    target: str,
+    prior_texts: List[str],
     prior_sessions: List[str],
     exclude_session: str,
 ) -> int:
-    """Longest leading-token run target shares with any allowed prior."""
+    """Longest leading-character run target shares with any allowed prior."""
     cp = 0
-    for si, prior in enumerate(prior_seqs):
+    for si, prior in enumerate(prior_texts):
         if prior_sessions[si] == exclude_session:
             continue
         L = min(len(prior), len(target))
@@ -180,8 +230,8 @@ def max_common_prefix(
 
 
 def find_matches(
-    target: List[int],
-    prior_seqs: List[List[int]],
+    target: str,
+    prior_texts: List[str],
     prior_sessions: List[str],
     index: Dict[int, List[Tuple[int, int]]],
     min_n: int,
@@ -189,8 +239,8 @@ def find_matches(
     skip_to: int = 0,
 ) -> List[Tuple[int, int, int, int]]:
     """Return (b_start, b_end, donor_seq_idx, donor_start) for every
-    non-overlapping ≥``min_n``-token match. ``donor_seq_idx`` indexes
-    into ``prior_seqs``; together with the donor's request_id (kept
+    non-overlapping ≥``min_n``-char match. ``donor_seq_idx`` indexes
+    into ``prior_texts``; together with the donor's request_id (kept
     parallel by the caller), this is what the splice manifest needs to
     identify both ends of the candidate splice pair."""
     matches: List[Tuple[int, int, int, int]] = []
@@ -198,7 +248,7 @@ def find_matches(
     T = len(target)
     while i + min_n <= T:
         window = target[i : i + min_n]
-        cands = index.get(hash(tuple(window)))
+        cands = index.get(hash(window))
         if not cands:
             i += 1
             continue
@@ -208,7 +258,7 @@ def find_matches(
         for si, p in cands:
             if prior_sessions[si] == exclude_session:
                 continue
-            seq = prior_seqs[si]
+            seq = prior_texts[si]
             if seq[p : p + min_n] != window:  # hash collision guard
                 continue
             ext = min_n
@@ -227,43 +277,24 @@ def find_matches(
     return matches
 
 
-def split_match_by_role(
-    start: int, end: int, token_role: List[str]
-) -> List[Tuple[int, int, str]]:
-    """A match span may straddle role boundaries. Return contiguous
-    (sub_start, sub_end, role) sub-segments."""
-    out: List[Tuple[int, int, str]] = []
-    i = start
-    while i < end:
-        r = token_role[i] if i < len(token_role) else "unknown"
-        j = i + 1
-        while j < end and (
-            (token_role[j] if j < len(token_role) else "unknown") == r
-        ):
-            j += 1
-        out.append((i, j, r))
-        i = j
-    return out
-
-
 def _sample_splice_candidates(
     candidates: List[dict],
     *,
     top_buckets: int,
     per_bucket: int,
 ) -> List[dict]:
-    """Cap manifest size. Rank buckets by total recurrence-token volume,
+    """Cap manifest size. Rank buckets by total recurrence-char volume,
     keep the top ``top_buckets``, then keep the largest ``per_bucket``
     candidate pairs per bucket (bigger chunks dominate splice savings)."""
     by_bucket: Dict[str, List[dict]] = defaultdict(list)
     bucket_volume: Dict[str, int] = defaultdict(int)
     for c in candidates:
         by_bucket[c["bucket_id"]].append(c)
-        bucket_volume[c["bucket_id"]] += c["chunk_n_tokens"]
+        bucket_volume[c["bucket_id"]] += c["chunk_n_chars"]
     ranked_buckets = sorted(bucket_volume.items(), key=lambda kv: -kv[1])
     out: List[dict] = []
     for bid, _ in ranked_buckets[:top_buckets]:
-        cands = sorted(by_bucket[bid], key=lambda c: -c["chunk_n_tokens"])
+        cands = sorted(by_bucket[bid], key=lambda c: -c["chunk_n_chars"])
         out.extend(cands[:per_bucket])
     return out
 
@@ -272,9 +303,14 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--source", required=True,
                     help="Local parquet/dataset path or hf://buckets/... URI.")
-    ap.add_argument("--min-match", type=int, default=128)
-    ap.add_argument("--max-tokens-per-session", type=int, default=20000,
-                    help="Cap each request's token sequence to bound index memory.")
+    ap.add_argument("--min-match", type=int, default=512,
+                    help="Minimum match length in CHARACTERS (was tokens in "
+                    "the old format). Default 512 ≈ a couple hundred tokens "
+                    "for English; tool outputs / file contents recur at "
+                    "much larger sizes than this.")
+    ap.add_argument("--max-chars-per-session", type=int, default=80_000,
+                    help="Cap each request's linearized text length to bound "
+                    "index memory.")
     ap.add_argument("--splice-top-buckets", type=int, default=20,
                     help="Splice manifest: keep this many top buckets "
                     "(byte-identical recurring chunks) ranked by volume.")
@@ -301,9 +337,7 @@ def main() -> None:
     ordered: List[Tuple[str, dict]] = []
     sids = sorted(grouped.keys(), key=lambda s: min(t for t, _ in grouped[s]))
     for sid in sids:
-        rows = sorted(
-            grouped[sid], key=lambda x: (x[0], int(x[1].get("n_tokens", 0)))
-        )
+        rows = sorted(grouped[sid], key=lambda x: x[0])
         for _, r in rows:
             ordered.append((sid, r))
     print(
@@ -312,54 +346,54 @@ def main() -> None:
         flush=True,
     )
 
-    print(f"[info] loading tokenizer {model_id}", flush=True)
-    from transformers import AutoTokenizer
-    tok = AutoTokenizer.from_pretrained(model_id)
-
-    prior_seqs: List[List[int]] = []
+    prior_texts: List[str] = []
     prior_sessions: List[str] = []
     prior_request_ids: List[str] = []
     index: Dict[int, List[Tuple[int, int]]] = {}
 
     splice_candidates: List[dict] = []
-    total_target_tokens = 0
-    total_cp_tokens = 0
-    total_post_prefix_input_tokens = 0
-    total_post_prefix_model_output_tokens = 0
+    total_target_chars = 0
+    total_cp_chars = 0
+    total_post_prefix_input_chars = 0
+    total_post_prefix_model_output_chars = 0
     n_requests_with_post_prefix = 0
 
     for sid, row in ordered:
-        rendered = row.get("rendered_tokens")
-        ids = list(rendered) if rendered else _render_tokens(row, tok)
-        ids = ids[: args.max_tokens_per_session]
-        if not ids:
+        req = _decode_request(row.get("request"))
+        text, spans = linearize_request(req)
+        text = text[: args.max_chars_per_session]
+        # Spans may extend past the cap — trim them.
+        trimmed_spans = [
+            (s, min(e, len(text)), r, idx)
+            for (s, e, r, idx) in spans
+            if s < len(text)
+        ]
+        if not text:
             continue
-        token_role: List[str] = list(row.get("token_role") or [])[: args.max_tokens_per_session]
-        total_target_tokens += len(ids)
+        total_target_chars += len(text)
 
-        cp = max_common_prefix(ids, prior_seqs, prior_sessions, sid)
+        cp = max_common_prefix(text, prior_texts, prior_sessions, sid)
         if cp >= args.min_match:
-            total_cp_tokens += cp
+            total_cp_chars += cp
 
-        spans = find_matches(
-            ids, prior_seqs, prior_sessions, index, args.min_match, sid,
+        spans_matches = find_matches(
+            text, prior_texts, prior_sessions, index, args.min_match, sid,
             skip_to=cp,
         )
-        if spans:
+        if spans_matches:
             n_requests_with_post_prefix += 1
-        for s, e, donor_si, donor_p in spans:
+        for s, e, donor_si, donor_p in spans_matches:
             donor_request_id = (
                 prior_request_ids[donor_si] if 0 <= donor_si < len(prior_request_ids) else ""
             )
-            for sub_s, sub_e, role in split_match_by_role(s, e, token_role):
+            for sub_s, sub_e, role in split_match_by_role(s, e, trimmed_spans):
                 length = sub_e - sub_s
                 if role == "assistant":
-                    total_post_prefix_model_output_tokens += length
+                    total_post_prefix_model_output_chars += length
                     continue
-                total_post_prefix_input_tokens += length
-                snippet_ids = ids[sub_s : min(sub_e, sub_s + 80)]
-                snippet = tok.decode(snippet_ids, skip_special_tokens=False)
-                chunk_bytes = b",".join(str(t).encode() for t in ids[sub_s:sub_e])
+                total_post_prefix_input_chars += length
+                snippet = text[sub_s : min(sub_e, sub_s + 80)]
+                chunk_bytes = text[sub_s:sub_e].encode("utf-8")
                 content_hash = hashlib.sha1(chunk_bytes).hexdigest()[:10]
                 donor_sub_start = donor_p + (sub_s - s)
                 donor_sub_end = donor_sub_start + length
@@ -371,41 +405,42 @@ def main() -> None:
                     "source_parquet": args.source,
                     "donor": {
                         "request_id": donor_request_id,
-                        "tok_range": [donor_sub_start, donor_sub_end],
+                        "char_range": [donor_sub_start, donor_sub_end],
                     },
                     "recipient": {
                         "request_id": row["request_id"],
-                        "tok_range": [sub_s, sub_e],
+                        "char_range": [sub_s, sub_e],
                     },
-                    "chunk_n_tokens": length,
+                    "chunk_n_chars": length,
                     "position_drift": sub_s - donor_sub_start,
                 })
 
-        add_to_index(index, ids, len(prior_seqs), args.min_match)
-        prior_seqs.append(ids)
+        add_to_index(index, text, len(prior_texts), args.min_match)
+        prior_texts.append(text)
         prior_sessions.append(sid)
         prior_request_ids.append(row["request_id"])
 
-    pct = lambda x: x / max(total_target_tokens, 1)
+    pct = lambda x: x / max(total_target_chars, 1)
     print()
     print(f"requests:                            {len(ordered)}")
     print(f"requests with ≥1 post-prefix match:  {n_requests_with_post_prefix}")
-    print(f"total target tokens:                 {total_target_tokens:,}")
-    print(f"  CP (prefix-cache served):          {total_cp_tokens:,}  ({pct(total_cp_tokens):.2%})")
-    print(f"  post-prefix input (splice cand.):  {total_post_prefix_input_tokens:,}  ({pct(total_post_prefix_input_tokens):.2%})")
-    print(f"  post-prefix model output (skipped):{total_post_prefix_model_output_tokens:,}  ({pct(total_post_prefix_model_output_tokens):.2%})")
+    print(f"total target chars:                  {total_target_chars:,}")
+    print(f"  CP (prefix-cache served):          {total_cp_chars:,}  ({pct(total_cp_chars):.2%})")
+    print(f"  post-prefix input (splice cand.):  {total_post_prefix_input_chars:,}  ({pct(total_post_prefix_input_chars):.2%})")
+    print(f"  post-prefix model output (skipped):{total_post_prefix_model_output_chars:,}  ({pct(total_post_prefix_model_output_chars):.2%})")
 
     out = {
         "source": args.source,
         "model": model_id,
         "min_match": args.min_match,
+        "unit": "chars",
         "n_sessions": len(grouped),
         "n_requests": len(ordered),
         "n_requests_with_post_prefix_match": n_requests_with_post_prefix,
-        "total_target_tokens": total_target_tokens,
-        "total_cp_tokens": total_cp_tokens,
-        "total_post_prefix_input_tokens": total_post_prefix_input_tokens,
-        "total_post_prefix_model_output_tokens": total_post_prefix_model_output_tokens,
+        "total_target_chars": total_target_chars,
+        "total_cp_chars": total_cp_chars,
+        "total_post_prefix_input_chars": total_post_prefix_input_chars,
+        "total_post_prefix_model_output_chars": total_post_prefix_model_output_chars,
     }
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_text(json.dumps(out, indent=2))
