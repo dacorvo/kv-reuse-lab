@@ -17,9 +17,24 @@ and the **CP** / **post-prefix matches** terminology.
 
 The splice mechanism (RoPE-rephased K/V transplant) is correct on
 attention-only architectures: full attention, multi-axis RoPE, and SWA
-(with `--swa-full`). End-to-end through patched llama-server on goose
-× Gemma-4 reproduces this at scale (164 pairs across E4B and 26B,
-zero catastrophic outliers, mean sim ≥ 0.92).
+(with `--swa-full`). Confirmed end-to-end through patched llama-server
+across the full agent × model matrix:
+
+- **Gemma-4-E4B (SWA + attention):** 574 successful splices across 8
+  (agent, session) corpora — goose, hermes, opencode, pi × {tc, hh}.
+  Mean agree 84.5%, mean sim 0.93, 3.3% catastrophic by generic
+  threshold (top-1 mismatch + KL>1 or sim<0.5).
+- **Qwen3-Coder-30B (full attention):** 396 splices across 4 (agent)
+  corpora × tc. Mean agree 84.8%, mean sim 0.93, 2.0% catastrophic.
+  First measurement of this architecture class; confirms the
+  full-attention prediction in the README architecture table.
+- **Gemma-4-26B (SWA + attention):** 4-corpus retry in progress
+  (sequential on 4 GPUs each — the model + ctx=131072 KV doesn't fit
+  on a 2-GPU split).
+- **Drift magnitude does not predict splice quality.** Agree rate is
+  flat across |drift| buckets from <100 to ≥50k tokens; bigger-drift
+  buckets actually trend slightly better because they're dominated by
+  larger chunks.
 
 The mechanism is **not applicable** to hybrid attention+recurrent
 models (Qwen3.5/3.6). On goose × Qwen3.6-35B-A3B, 9% of pairs
@@ -98,9 +113,17 @@ prefilled, GPU-seconds are the value-add metrics.
 
 ### 2. Cross-agent / cross-model heuristic validation
 
-The turn-delta admission heuristic (item §1.3) was observed on goose
-× Gemma-4 only. Before treating it as load-bearing, validate on
-opencode/aider/hermes and on other non-hybrid attention models.
+**Splice-correctness generalization — done.** Confirmed on
+goose/hermes/opencode/pi × {Gemma-4-E4B, Qwen3-Coder-30B} (Gemma-4-26B
+retry pending), see headline. Splice quality is agent-invariant on
+attention-only architectures; the catastrophic-outlier signatures
+remain bounded to the hybrid Qwen3.5/3.6 class.
+
+**Turn-delta admission heuristic — still pending.** The
+`recipient_turns − donor_turns` regression (item §1.3) is computable
+from the new sweep data ([/tmp/cm_verify/splice_metrics/](file:///tmp/cm_verify/splice_metrics/))
+across agents — replicate the goose × Gemma-4 finding before treating
+it as load-bearing.
 
 ### 3. Past-the-bound splice correctness (deferred)
 

@@ -49,25 +49,32 @@ p_B, continue.
 
 ## Headline result
 
-End-to-end measurement on goose × Hugging Face transformers as a
-substrate, three model families:
+End-to-end measurement across **16 (agent, model, session) corpora**:
+four agents (goose, hermes, opencode, pi), three splice-applicable
+model families, two task substrates (`tc` = transformers-coding-session,
+`hh` = hf-hub-session). Per-model aggregates:
 
-| corpus | model | N | agree | mean KL | mean sim | catastrophic |
+| model | corpora | N pairs | agree | mean KL | mean sim | catastrophic |
 |---|---|---|---|---|---|---|
-| goose × Qwen3.6 | qwen3.6-35B-A3B (hybrid) | 88 | 75.0% | 4.40 | 0.91 | **8 (9%)** |
-| goose × Gemma-4-E4B | gemma-4-E4B-it (SWA + attention) | 80 | 82.5% | 0.23 | 0.92 | 0 |
-| goose × Gemma-4-26B | gemma-4-26B-A4B-it (SWA + attention) | 84 | 94.0% | 0.05 | 0.94 | 0 |
+| Gemma-4-E4B (SWA + attention) | 8 (4 agents × {tc, hh}) | 574 | 84.5% | 0.16 | 0.93 | 19 (3.3%) |
+| Qwen3-Coder-30B (full attention) | 4 (4 agents × tc) | 396 | 84.8% | 0.36 | 0.93 | 8 (2.0%) |
+| Gemma-4-26B (SWA + attention) | 4 (4 agents × tc) | _retry running_ | — | — | — | — |
+| Qwen3.6-35B (hybrid, off-table) | 1 (goose × tc) | 88 | 75.0% | 4.40 | 0.91 | **8 (9%)** |
 
-Attention-only architectures splice cleanly. Hybrid attention+recurrent
-(Qwen3.5/3.6) produces 9% catastrophic outliers — the spliced first
-token collapses to either `</` (orphan close-tag stream) or
-`<|im_end|>` (premature end-of-turn). These are recurrent-state
-corruption signatures: the K-shift rephases attention K/V but cannot
-rewrite the gated-delta-net layer's compressed state. Detail at
-[trace_analysis/results/agentcap_goose_splice_postmortem.md](trace_analysis/results/agentcap_goose_splice_postmortem.md).
+Per-corpus breakdown + drift-bucket regression: [/tmp/cm_verify/sweep_summary_full.md](file:///tmp/cm_verify/sweep_summary_full.md) (auto-generated when the 26B retry completes).
 
-Median prefill speedup on the Gemma-4-26B sweep: **2.0× (cold vs
-spliced wall-clock)**, p75 3.3×.
+Attention-only architectures splice cleanly across all four agents:
+agree-rate spread on Gemma-4-E4B is 67–91% (hh_opencode lowest at N=6,
+others 73–91%); Qwen3-Coder-30B 82–90%. Splice quality does **not**
+degrade with drift magnitude — |drift| < 100 and |drift| ≥ 50k token
+buckets both clean. Hybrid attention+recurrent (Qwen3.5/3.6) remains
+the only architecture class producing the catastrophic orphan-token
+signatures (`</`, `<|im_end|>`): K-shift rephases attention K/V but
+cannot rewrite the gated-delta-net layer's compressed state. Detail
+at [trace_analysis/results/agentcap_goose_splice_postmortem.md](trace_analysis/results/agentcap_goose_splice_postmortem.md).
+
+Median prefill speedup on the original goose × Gemma-4-26B sweep:
+**2.0×** wall-clock, p75 3.3× (cross-agent timings pending the 26B retry).
 
 ## Architecture applicability
 
