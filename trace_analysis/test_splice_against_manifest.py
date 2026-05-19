@@ -187,11 +187,24 @@ def _fetch_pair_bodies(manifest_pair: dict) -> tuple[dict, dict]:
         f"could not find both request_ids in parquet; got {list(bodies)}")
 
 
+def _strip_nulls(obj):
+    """Drop ``None`` values recursively. The new agentcap parquet export
+    carries explicit ``null`` for absent optional fields (e.g.
+    ``messages[*].tool_call_id``, ``tools[*].function.parameters.
+    properties.<param>``); llama-server's strict OpenAI parser rejects
+    those with ``type must be string, but is null``."""
+    if isinstance(obj, dict):
+        return {k: _strip_nulls(v) for k, v in obj.items() if v is not None}
+    if isinstance(obj, list):
+        return [_strip_nulls(v) for v in obj if v is not None]
+    return obj
+
+
 def _body(req: dict, *, max_tokens: int, cache_prompt: bool,
           top_logprobs: int = 0) -> dict:
     out = {
-        "messages": req.get("messages", []),
-        "tools": req.get("tools"),
+        "messages": _strip_nulls(req.get("messages", [])),
+        "tools": _strip_nulls(req.get("tools")),
         "max_tokens": max_tokens,
         "temperature": 0.0,
         "cache_prompt": cache_prompt,
