@@ -29,7 +29,6 @@ a splice-candidate manifest entry.
 Usage:
     ./categorize_matches.py \\
         --source hf://buckets/dacorvo/agentcap-traces/<corpus>.parquet \\
-        --min-match 512 \\
         --output trace_analysis/results/<name>_match_categories.json
 """
 from __future__ import annotations
@@ -37,6 +36,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import multiprocessing as mp
+import os
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
@@ -209,15 +211,20 @@ def add_to_index(
 
 def max_common_prefix(
     target: str,
-    prior_texts: List[str],
-    prior_sessions: List[str],
+    all_texts: List[str],
+    all_sessions: List[str],
     exclude_session: str,
+    donor_idx_lt: int,
 ) -> int:
-    """Longest leading-character run target shares with any allowed prior."""
+    """Longest leading-character run target shares with any allowed
+    donor. ``donor_idx_lt`` excludes donors whose seq_idx is ``>=``
+    that bound — i.e. only earlier (chronologically prior) donors
+    count, matching the original sequential semantics."""
     cp = 0
-    for si, prior in enumerate(prior_texts):
-        if prior_sessions[si] == exclude_session:
+    for si in range(donor_idx_lt):
+        if all_sessions[si] == exclude_session:
             continue
+        prior = all_texts[si]
         L = min(len(prior), len(target))
         if L == 0 or prior[0] != target[0]:
             continue
@@ -231,18 +238,23 @@ def max_common_prefix(
 
 def find_matches(
     target: str,
-    prior_texts: List[str],
-    prior_sessions: List[str],
+    all_texts: List[str],
+    all_sessions: List[str],
     index: Dict[int, List[Tuple[int, int]]],
     min_n: int,
     exclude_session: str,
+    donor_idx_lt: int,
     skip_to: int = 0,
 ) -> List[Tuple[int, int, int, int]]:
     """Return (b_start, b_end, donor_seq_idx, donor_start) for every
     non-overlapping ≥``min_n``-char match. ``donor_seq_idx`` indexes
-    into ``prior_texts``; together with the donor's request_id (kept
+    into ``all_texts``; together with the donor's request_id (kept
     parallel by the caller), this is what the splice manifest needs to
-    identify both ends of the candidate splice pair."""
+    identify both ends of the candidate splice pair.
+
+    ``donor_idx_lt`` excludes candidates with ``seq_idx >= donor_idx_lt``
+    so the global index can be searched by any receiver while still
+    honouring the chronological constraint."""
     matches: List[Tuple[int, int, int, int]] = []
     i = max(0, skip_to)
     T = len(target)
@@ -256,9 +268,11 @@ def find_matches(
         best_si = -1
         best_p = -1
         for si, p in cands:
-            if prior_sessions[si] == exclude_session:
+            if si >= donor_idx_lt:
                 continue
-            seq = prior_texts[si]
+            if all_sessions[si] == exclude_session:
+                continue
+            seq = all_texts[si]
             if seq[p : p + min_n] != window:  # hash collision guard
                 continue
             ext = min_n
@@ -299,13 +313,95 @@ def _sample_splice_candidates(
     return out
 
 
+# --- Globals populated in main(), inherited read-only by Pool workers
+# via fork. Kept module-level on purpose: passing them as worker args
+# would re-pickle the 100s-of-MB index per task and kill the speedup.
+_TEXTS: List[str] = []
+_SESSIONS: List[str] = []
+_REQUEST_IDS: List[str] = []
+_SPANS: List[List[Tuple[int, int, str, int]]] = []
+_INDEX: Dict[int, List[Tuple[int, int]]] = {}
+_ARGS: argparse.Namespace | None = None
+_MODEL_ID: str | None = None
+
+
+def _process_one(seq_idx: int) -> dict:
+    """Per-receiver worker. Computes CP + post-CP matches against the
+    global index, returning the receiver's aggregates + raw splice
+    candidates. Uses the module globals (fork-inherited) so the index
+    isn't pickled into each task."""
+    text = _TEXTS[seq_idx]
+    if not text:
+        return {"seq_idx": seq_idx, "empty": True}
+
+    spans = _SPANS[seq_idx]
+    sid = _SESSIONS[seq_idx]
+    rid = _REQUEST_IDS[seq_idx]
+    assert _ARGS is not None  # narrow for type-checkers
+    args = _ARGS
+
+    cp = max_common_prefix(text, _TEXTS, _SESSIONS, sid, donor_idx_lt=seq_idx)
+    cp_counted = cp if cp >= args.min_match else 0
+
+    spans_matches = find_matches(
+        text, _TEXTS, _SESSIONS, _INDEX, args.min_match, sid,
+        donor_idx_lt=seq_idx, skip_to=cp,
+    )
+
+    post_prefix_input = 0
+    post_prefix_model_output = 0
+    splice_candidates: List[dict] = []
+    for s, e, donor_si, donor_p in spans_matches:
+        donor_request_id = (
+            _REQUEST_IDS[donor_si] if 0 <= donor_si < len(_REQUEST_IDS) else ""
+        )
+        for sub_s, sub_e, role in split_match_by_role(s, e, spans):
+            length = sub_e - sub_s
+            if role == "assistant":
+                post_prefix_model_output += length
+                continue
+            post_prefix_input += length
+            snippet = text[sub_s : min(sub_e, sub_s + 80)]
+            chunk_bytes = text[sub_s:sub_e].encode("utf-8")
+            content_hash = hashlib.sha1(chunk_bytes).hexdigest()[:10]
+            donor_sub_start = donor_p + (sub_s - s)
+            donor_sub_end = donor_sub_start + length
+            splice_candidates.append({
+                "bucket_id": f"{role}:{content_hash}",
+                "role": role,
+                "snippet": snippet,
+                "model": _MODEL_ID,
+                "source_parquet": args.source,
+                "donor": {
+                    "request_id": donor_request_id,
+                    "char_range": [donor_sub_start, donor_sub_end],
+                },
+                "recipient": {
+                    "request_id": rid,
+                    "char_range": [sub_s, sub_e],
+                },
+                "chunk_n_chars": length,
+                "position_drift": sub_s - donor_sub_start,
+            })
+
+    return {
+        "seq_idx": seq_idx,
+        "text_len": len(text),
+        "cp_counted": cp_counted,
+        "has_post_prefix_match": bool(spans_matches),
+        "post_prefix_input": post_prefix_input,
+        "post_prefix_model_output": post_prefix_model_output,
+        "splice_candidates": splice_candidates,
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--source", required=True,
                     help="Local parquet/dataset path or hf://buckets/... URI.")
-    ap.add_argument("--min-match", type=int, default=512,
+    ap.add_argument("--min-match", type=int, default=4096,
                     help="Minimum match length in CHARACTERS (was tokens in "
-                    "the old format). Default 512 ≈ a couple hundred tokens "
+                    "the old format). Default 4096 ≈ a thousand tokens "
                     "for English; tool outputs / file contents recur at "
                     "much larger sizes than this.")
     ap.add_argument("--max-chars-per-session", type=int, default=80_000,
@@ -317,6 +413,10 @@ def main() -> None:
     ap.add_argument("--splice-per-bucket", type=int, default=5,
                     help="Splice manifest: keep this many largest-chunk "
                     "candidates per kept bucket.")
+    ap.add_argument("--workers", type=int, default=os.cpu_count() or 1,
+                    help="Number of worker processes for the per-receiver "
+                    "match search. Defaults to os.cpu_count(). Set to 1 to "
+                    "run sequentially (useful for debugging).")
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
 
@@ -346,83 +446,128 @@ def main() -> None:
         flush=True,
     )
 
-    prior_texts: List[str] = []
-    prior_sessions: List[str] = []
-    prior_request_ids: List[str] = []
-    index: Dict[int, List[Tuple[int, int]]] = {}
+    # Stage 1 (sequential): linearize every receiver up-front so the
+    # workers can read by seq_idx without needing the raw row.
+    print("[info] linearising requests…", flush=True)
+    texts: List[str] = []
+    sessions: List[str] = []
+    request_ids: List[str] = []
+    spans_per_req: List[List[Tuple[int, int, str, int]]] = []
+    for sid, row in ordered:
+        req = _decode_request(row.get("request"))
+        text, spans = linearize_request(req)
+        text = text[: args.max_chars_per_session]
+        trimmed_spans = [
+            (s, min(e, len(text)), r, idx)
+            for (s, e, r, idx) in spans
+            if s < len(text)
+        ]
+        texts.append(text)
+        sessions.append(sid)
+        request_ids.append(row["request_id"])
+        spans_per_req.append(trimmed_spans)
 
+    # Stage 2 (sequential): build the global hash index from every
+    # text. The chronological constraint (donor.seq_idx < receiver
+    # .seq_idx) is enforced inside each worker via ``donor_idx_lt``.
+    print(
+        f"[info] building global index (min_match={args.min_match} chars)…",
+        flush=True,
+    )
+    index: Dict[int, List[Tuple[int, int]]] = {}
+    for si, text in enumerate(texts):
+        add_to_index(index, text, si, args.min_match)
+    n_index_entries = sum(len(v) for v in index.values())
+    print(
+        f"[info] index: {len(index):,} keys, {n_index_entries:,} entries",
+        flush=True,
+    )
+
+    # Stage 3: per-receiver match search, parallel over receivers.
+    # Globals are populated *before* fork so children inherit the
+    # built index + texts at zero serialisation cost.
+    global _TEXTS, _SESSIONS, _REQUEST_IDS, _SPANS, _INDEX, _ARGS, _MODEL_ID
+    _TEXTS = texts
+    _SESSIONS = sessions
+    _REQUEST_IDS = request_ids
+    _SPANS = spans_per_req
+    _INDEX = index
+    _ARGS = args
+    _MODEL_ID = model_id
+
+    n_workers = max(1, args.workers)
+    print(
+        f"[info] searching {len(texts)} receivers with {n_workers} workers…",
+        flush=True,
+    )
+    seq_idxs = list(range(len(texts)))
+    import time
+    t0 = time.time()
+    n_total = len(seq_idxs)
+    per_receiver: List[dict] = []
+
+    def _emit_progress(done: int) -> None:
+        elapsed = time.time() - t0
+        rate = done / elapsed if elapsed > 0 else 0.0
+        eta = (n_total - done) / rate if rate > 0 else float("inf")
+        print(
+            f"[progress] {done}/{n_total} receivers ({100 * done / n_total:.1f}%) "
+            f"  elapsed={elapsed:.1f}s  rate={rate:.1f}/s  eta={eta:.0f}s",
+            flush=True,
+        )
+
+    # Print progress every ~2% or every 60s of wall time, whichever
+    # comes first; both gives steady output on short and long runs.
+    progress_every = max(1, n_total // 50)
+    last_print_t = t0
+
+    if n_workers == 1:
+        for done, i in enumerate(seq_idxs, start=1):
+            per_receiver.append(_process_one(i))
+            if done % progress_every == 0 or time.time() - last_print_t > 60:
+                _emit_progress(done)
+                last_print_t = time.time()
+    else:
+        # ``fork`` is the linux default and the whole point of keeping
+        # the index module-global: workers share it via copy-on-write
+        # without any pickling. Set explicitly so future Python
+        # default-changes don't silently regress to ``spawn``.
+        ctx = mp.get_context("fork")
+        chunksize = max(1, len(seq_idxs) // (n_workers * 4) or 1)
+        with ctx.Pool(n_workers) as pool:
+            for done, r in enumerate(
+                pool.imap_unordered(_process_one, seq_idxs, chunksize=chunksize),
+                start=1,
+            ):
+                per_receiver.append(r)
+                if done % progress_every == 0 or time.time() - last_print_t > 60:
+                    _emit_progress(done)
+                    last_print_t = time.time()
+    _emit_progress(len(per_receiver))
+
+    # Stage 4 (sequential): reconcile per-receiver results.
     splice_candidates: List[dict] = []
     total_target_chars = 0
     total_cp_chars = 0
     total_post_prefix_input_chars = 0
     total_post_prefix_model_output_chars = 0
     n_requests_with_post_prefix = 0
-
-    for sid, row in ordered:
-        req = _decode_request(row.get("request"))
-        text, spans = linearize_request(req)
-        text = text[: args.max_chars_per_session]
-        # Spans may extend past the cap — trim them.
-        trimmed_spans = [
-            (s, min(e, len(text)), r, idx)
-            for (s, e, r, idx) in spans
-            if s < len(text)
-        ]
-        if not text:
+    n_nonempty = 0
+    for r in per_receiver:
+        if r.get("empty"):
             continue
-        total_target_chars += len(text)
-
-        cp = max_common_prefix(text, prior_texts, prior_sessions, sid)
-        if cp >= args.min_match:
-            total_cp_chars += cp
-
-        spans_matches = find_matches(
-            text, prior_texts, prior_sessions, index, args.min_match, sid,
-            skip_to=cp,
-        )
-        if spans_matches:
+        n_nonempty += 1
+        total_target_chars += r["text_len"]
+        total_cp_chars += r["cp_counted"]
+        if r["has_post_prefix_match"]:
             n_requests_with_post_prefix += 1
-        for s, e, donor_si, donor_p in spans_matches:
-            donor_request_id = (
-                prior_request_ids[donor_si] if 0 <= donor_si < len(prior_request_ids) else ""
-            )
-            for sub_s, sub_e, role in split_match_by_role(s, e, trimmed_spans):
-                length = sub_e - sub_s
-                if role == "assistant":
-                    total_post_prefix_model_output_chars += length
-                    continue
-                total_post_prefix_input_chars += length
-                snippet = text[sub_s : min(sub_e, sub_s + 80)]
-                chunk_bytes = text[sub_s:sub_e].encode("utf-8")
-                content_hash = hashlib.sha1(chunk_bytes).hexdigest()[:10]
-                donor_sub_start = donor_p + (sub_s - s)
-                donor_sub_end = donor_sub_start + length
-                splice_candidates.append({
-                    "bucket_id": f"{role}:{content_hash}",
-                    "role": role,
-                    "snippet": snippet,
-                    "model": model_id,
-                    "source_parquet": args.source,
-                    "donor": {
-                        "request_id": donor_request_id,
-                        "char_range": [donor_sub_start, donor_sub_end],
-                    },
-                    "recipient": {
-                        "request_id": row["request_id"],
-                        "char_range": [sub_s, sub_e],
-                    },
-                    "chunk_n_chars": length,
-                    "position_drift": sub_s - donor_sub_start,
-                })
-
-        add_to_index(index, text, len(prior_texts), args.min_match)
-        prior_texts.append(text)
-        prior_sessions.append(sid)
-        prior_request_ids.append(row["request_id"])
+        total_post_prefix_input_chars += r["post_prefix_input"]
+        total_post_prefix_model_output_chars += r["post_prefix_model_output"]
+        splice_candidates.extend(r["splice_candidates"])
 
     pct = lambda x: x / max(total_target_chars, 1)
     print()
-    print(f"requests:                            {len(ordered)}")
+    print(f"requests:                            {n_nonempty}")
     print(f"requests with ≥1 post-prefix match:  {n_requests_with_post_prefix}")
     print(f"total target chars:                  {total_target_chars:,}")
     print(f"  CP (prefix-cache served):          {total_cp_chars:,}  ({pct(total_cp_chars):.2%})")
