@@ -1,12 +1,13 @@
 {
   "source": "hf://buckets/dacorvo/agentcap-traces/transformers-coding-session/train-hermes-Qwen3.6-35B-A3B-hf-router-20260512T201730-c0dd98.parquet",
   "model": "Qwen/Qwen3.6-35B-A3B",
-  "min_match": 1024,
+  "min_match": 4096,
+  "unit": "chars",
   "n_sessions": 30,
   "n_requests": 924,
-  "n_requests_with_post_prefix_match": 263,
-  "total_target_tokens": 18128892,
-  "total_cp_tokens": 13331490,
-  "total_post_prefix_input_tokens": 531452,
-  "total_post_prefix_model_output_tokens": 22814
+  "n_requests_with_post_prefix_match": 337,
+  "total_target_chars": 59302683,
+  "total_cp_chars": 17701110,
+  "total_post_prefix_input_chars": 4019168,
+  "total_post_prefix_model_output_chars": 514
 }

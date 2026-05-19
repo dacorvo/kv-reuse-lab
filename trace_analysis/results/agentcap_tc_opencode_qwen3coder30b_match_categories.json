@@ -1,12 +1,13 @@
 {
   "source": "hf://buckets/dacorvo/agentcap-traces/transformers-coding-session/train-opencode-Qwen3-Coder-30B-A3B-Instruct-local-llama-server-20260512T141146-e2ff19.parquet",
   "model": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
-  "min_match": 1024,
+  "min_match": 4096,
+  "unit": "chars",
   "n_sessions": 44,
   "n_requests": 1134,
-  "n_requests_with_post_prefix_match": 205,
-  "total_target_tokens": 21070617,
-  "total_cp_tokens": 14785287,
-  "total_post_prefix_input_tokens": 1255612,
-  "total_post_prefix_model_output_tokens": 14432
+  "n_requests_with_post_prefix_match": 381,
+  "total_target_chars": 71208213,
+  "total_cp_chars": 20525610,
+  "total_post_prefix_input_chars": 11580441,
+  "total_post_prefix_model_output_chars": 3543
 }

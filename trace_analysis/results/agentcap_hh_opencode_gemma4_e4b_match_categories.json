@@ -1,12 +1,13 @@
 {
   "source": "hf://buckets/dacorvo/agentcap-traces/hf-hub-session/train-opencode-gemma-4-E4B-it-local-llama-server-20260512T131727-96f949.parquet",
   "model": "google/gemma-4-E4B-it",
-  "min_match": 1024,
+  "min_match": 4096,
+  "unit": "chars",
   "n_sessions": 61,
   "n_requests": 377,
   "n_requests_with_post_prefix_match": 3,
-  "total_target_tokens": 3854179,
-  "total_cp_tokens": 3507817,
-  "total_post_prefix_input_tokens": 13062,
-  "total_post_prefix_model_output_tokens": 0
+  "total_target_chars": 6184213,
+  "total_cp_chars": 5438802,
+  "total_post_prefix_input_chars": 22749,
+  "total_post_prefix_model_output_chars": 0
 }

@@ -1,0 +1,13 @@
+{
+  "source": "hf://buckets/dacorvo/agentcap-traces/transformers-coding-session/train-hermes-GLM-4.5-Air-local-20260519T063821-fdb544.parquet",
+  "model": "zai-org/GLM-4.5-Air",
+  "min_match": 4096,
+  "unit": "chars",
+  "n_sessions": 70,
+  "n_requests": 2061,
+  "n_requests_with_post_prefix_match": 734,
+  "total_target_chars": 118533190,
+  "total_cp_chars": 38141353,
+  "total_post_prefix_input_chars": 11025555,
+  "total_post_prefix_model_output_chars": 18741
+}

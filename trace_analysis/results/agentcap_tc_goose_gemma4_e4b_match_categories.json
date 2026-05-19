@@ -1,12 +1,13 @@
 {
   "source": "hf://buckets/dacorvo/agentcap-traces/transformers-coding-session/train-goose-gemma-4-E4B-it-local-llama-server-20260512T135958-088f79.parquet",
   "model": "google/gemma-4-E4B-it",
-  "min_match": 1024,
+  "min_match": 4096,
+  "unit": "chars",
   "n_sessions": 68,
   "n_requests": 310,
-  "n_requests_with_post_prefix_match": 233,
-  "total_target_tokens": 4562761,
-  "total_cp_tokens": 1243331,
-  "total_post_prefix_input_tokens": 2469500,
-  "total_post_prefix_model_output_tokens": 57920
+  "n_requests_with_post_prefix_match": 235,
+  "total_target_chars": 11582386,
+  "total_cp_chars": 2520015,
+  "total_post_prefix_input_chars": 5574783,
+  "total_post_prefix_model_output_chars": 155025
 }

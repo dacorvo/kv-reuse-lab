@@ -1,12 +1,13 @@
 {
   "source": "hf://buckets/dacorvo/agentcap-traces/transformers-coding-session/train-pi-gemma-4-26B-A4B-it-local-llama-server-20260512T141320-34bc52.parquet",
   "model": "google/gemma-4-26B-A4B-it",
-  "min_match": 1024,
+  "min_match": 4096,
+  "unit": "chars",
   "n_sessions": 58,
   "n_requests": 567,
-  "n_requests_with_post_prefix_match": 232,
-  "total_target_tokens": 9732404,
-  "total_cp_tokens": 2266242,
-  "total_post_prefix_input_tokens": 2777457,
-  "total_post_prefix_model_output_tokens": 83163
+  "n_requests_with_post_prefix_match": 239,
+  "total_target_chars": 36499325,
+  "total_cp_chars": 7591412,
+  "total_post_prefix_input_chars": 9699385,
+  "total_post_prefix_model_output_chars": 11110
 }

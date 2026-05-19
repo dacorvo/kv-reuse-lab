@@ -1,12 +1,13 @@
 {
   "source": "hf://buckets/dacorvo/agentcap-traces/transformers-coding-session/train-hermes-Qwen3.6-35B-A3B-local-llama-server-20260513T091703-c54c0d.parquet",
   "model": "unsloth/Qwen3.6-35B-A3B",
-  "min_match": 1024,
+  "min_match": 4096,
+  "unit": "chars",
   "n_sessions": 36,
   "n_requests": 1006,
-  "n_requests_with_post_prefix_match": 420,
-  "total_target_tokens": 19263189,
-  "total_cp_tokens": 13282564,
-  "total_post_prefix_input_tokens": 1714075,
-  "total_post_prefix_model_output_tokens": 7361
+  "n_requests_with_post_prefix_match": 466,
+  "total_target_chars": 58263506,
+  "total_cp_chars": 17279600,
+  "total_post_prefix_input_chars": 12428768,
+  "total_post_prefix_model_output_chars": 10463
 }
